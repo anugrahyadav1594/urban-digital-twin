@@ -1,0 +1,113 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Mula River", "type": "river", "width": 45 },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [73.705, 18.605], [73.725, 18.598], [73.745, 18.592], [73.765, 18.588],
+          [73.782, 18.578], [73.798, 18.568], [73.815, 18.560], [73.832, 18.552],
+          [73.850, 18.545], [73.868, 18.535], [73.874, 18.532]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Mutha River", "type": "river", "width": 40 },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [73.775, 18.442], [73.792, 18.460], [73.808, 18.478], [73.825, 18.495],
+          [73.840, 18.510], [73.852, 18.520], [73.862, 18.526], [73.874, 18.532]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Mula-Mutha Combined River", "type": "river", "width": 55 },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [73.874, 18.532], [73.888, 18.533], [73.905, 18.535], [73.925, 18.536],
+          [73.945, 18.537], [73.965, 18.538], [73.985, 18.537], [74.005, 18.535]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Pavana River", "type": "river", "width": 35 },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [73.738, 18.645], [73.755, 18.638], [73.775, 18.632], [73.792, 18.622],
+          [73.812, 18.608], [73.828, 18.592], [73.832, 18.552]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Indrayani River", "type": "river", "width": 38 },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [73.700, 18.720], [73.730, 18.715], [73.760, 18.710], [73.790, 18.705],
+          [73.820, 18.702], [73.850, 18.700], [73.880, 18.698], [73.910, 18.695]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Khadakwasla Dam Reservoir", "type": "lake" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [73.715, 18.420], [73.732, 18.428], [73.755, 18.435], [73.775, 18.442],
+            [73.770, 18.432], [73.750, 18.422], [73.730, 18.412], [73.715, 18.420]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Pashan Lake", "type": "lake" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [73.781, 18.534], [73.788, 18.539], [73.794, 18.536], [73.790, 18.530],
+            [73.783, 18.528], [73.781, 18.534]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Katraj Lake Reservoir", "type": "lake" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [73.855, 18.455], [73.862, 18.458], [73.865, 18.453], [73.859, 18.450],
+            [73.855, 18.455]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Kasarsai Reservoir", "type": "lake" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [73.682, 18.610], [73.695, 18.620], [73.705, 18.615], [73.698, 18.602],
+            [73.682, 18.610]
+          ]
+        ]
+      }
+    }
+  ]
+}
