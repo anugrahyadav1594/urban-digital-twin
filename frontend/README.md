@@ -1,80 +1,104 @@
 # NAGAR-X — Urban Digital Twin · Floating-Window Planning Workspace (frontend)
 
-A desktop-style geospatial planning workspace: a full-viewport **CesiumJS 3D city** as the
-application canvas, a horizontal command navbar, and every tool as a **draggable / resizable
-floating window**.
+A desktop-style geospatial planning workspace featuring a full-viewport **CesiumJS 3D city & digital twin canvas**, a horizontal command navbar, compact status bars, and draggable / resizable / auto-aligning **floating tool windows**.
 
-## Run
+---
+
+## 🚀 Getting Started
 
 ```bash
-npm install     # also copies the CesiumJS build into public/cesium
-npm run dev     # http://localhost:3000  ->  redirects to /workspace
+npm install     # Installs dependencies & copies CesiumJS build into public/cesium
+npm run dev     # Starts Next.js dev server at http://localhost:3000 (auto-redirects to /workspace)
 ```
 
-Node 20+ works, Node 22+ recommended (CesiumJS declares `engines.node >= 22`).
+Node 20+ supported; Node 22+ recommended (CesiumJS engine requirement).
 
-Optional `.env.local` (copy from `.env.local.example`):
+### Environment Configuration (`.env.local`)
 
-| Variable | Purpose |
-| --- | --- |
-| `NEXT_PUBLIC_CESIUM_ION_TOKEN` | Cesium Ion token → world terrain / imagery. Empty = CARTO dark basemap, no token needed. |
-| `NEXT_PUBLIC_API_BASE_URL` | FastAPI backend. Unreachable → the app silently uses the deterministic demo engine (`DEMO DATA` badge). |
-| `NEXT_PUBLIC_CITY_LON` / `_LAT` | Pilot city centre. |
+Copy `.env.local.example` to `.env.local` to customize settings:
 
-## What is implemented
+| Variable | Description | Default / Fallback |
+| --- | --- | --- |
+| `NEXT_PUBLIC_CESIUM_ION_TOKEN` | Cesium Ion Access Token for world terrain & imagery | Empty → Uses CartoDB / Esri dark basemaps |
+| `NEXT_PUBLIC_API_BASE_URL` | FastAPI backend URL | Empty → Silently switches to offline deterministic engine (`DEMO DATA` badge) |
+| `NEXT_PUBLIC_CITY_LON` | Pilot city center longitude | `73.7389` (Pune, MH) |
+| `NEXT_PUBLIC_CITY_LAT` | Pilot city center latitude | `18.5913` (Pune, MH) |
 
-**M1 Workspace foundation** — Next.js 15 (App Router) + TypeScript + Zustand + Cesium,
-top navbar, WindowManager, FloatingWindow (drag, 8-way resize, minimize, maximize, close,
-focus/z-index, edge snapping, pin left/right, per-window menu), taskbar, command palette,
-`localStorage` layout persistence, workspace presets, keyboard shortcuts.
+---
 
-**M2/M3 Digital twin** — procedural pilot city (676 parcels, 3D buildings, road network,
-river corridor, facilities), layer system with visibility + opacity, feature picking →
-Inspector, legend.
+## ✨ Features & Recent Modifications
 
-**M4 Planning** — planning toolbar (select / draw road / place hospital, school, fire station /
-draw zone / measure), site suitability with criteria weights, road alignment drawing with
-impact readout and "add to scenario".
+### 📐 Compact Layout & Halved Bar Sizes
+- **Compact Top Navbar**: Height set to **`66px`** (`NAVBAR_HEIGHT = 66`).
+- **Compact Taskbar**: Height set to **`48px`** (`TASKBAR_HEIGHT = 48`).
+- **Adjusted Floating Controls**: 3D globe controls panel bottom offset set to `64px` for optimal screen real estate.
 
-**M5 Scenarios** — scenario manager, growth slider, lifecycle status, change set.
+### 🎨 SVG Vector Icons & Dropdown Animations
+- **Vector Icons**: All navbar items, buttons, search controls, and group categories (`City`, `Scenario`, `Layers`, `Planning`, `Analysis`, `Simulation`, `Compare`, `AI`, `Workspace`) use clean vector SVG icons.
+- **Animated Chevrons**: Dropdown chevron arrows (`ChevronDownIcon`) smoothly rotate **180°** (`transform: rotate(180deg)`) when open.
+- **Slide-Down Animations**: Dropdown menus animate in with smooth scale and slide-down transitions (`keyframes menuSlideDown`).
+- **Item Micro-Animations**: Dropdown menu items slide horizontally on hover (`transform: translateX(3px)`) with cyan highlights (`#38bdf8`).
+- **Cyber Dark Select Theme**: `<select>` dropdowns and `<option>` lists styled with deep slate backgrounds (`#090e16`) and cyan active highlights.
 
-**M6 Analysis** — accessibility, flood risk, suitability; async job pipeline with staged
-progress; generic result model (metrics, table, ranked entities, map binding, provenance).
+### 🌐 National Highways, Waterbodies & Boundary Layers
+- **National Highways Layer (`highways`)**:
+  - **Esri World Transportation Reference Layer**: Toggleable layer displaying all National Highway routes (`NH 48`, `NH 65`, `NH 60`, `NH 52`, etc.) with official route numbers and road hierarchy across India.
+  - **Curated Highway Data**: `india-highways.json` GeoJSON with midpoint screen-space NH route labels near Pune.
+- **Waterbodies & Hydrography Layer (`water`)**:
+  - **Esri World Ocean Reference Layer**: Toggleable layer displaying all natural waterbodies (oceans, seas, bays, gulfs, major rivers, lakes, and reservoirs) globally.
+  - **Authentic Pune Waterbodies Data**: `pune-waterbodies.json` GeoJSON with real-world OpenStreetMap coordinates for Mula River, Mutha River, Pavana River, Indrayani River, Khadakwasla Dam, Pashan Lake, Katraj Lake, and Kasarsai Reservoir.
+- **Boundaries & Places Layer**:
+  - **Esri World Boundaries & Places Layer**: Authoritative international and state boundary lines.
+  - **Inter-State GeoJSON Layer**: `india-states.json` inter-state boundary lines.
 
-**M7 Decision support** — scenario comparison matrix with winner + trade-off explanation,
-AI planning assistant with a live agent trace over deterministic tools.
+### 🧭 Camera Controls, Shortest-Path Navigation & Collision Detection
+- **True North Re-Alignment (`alignNorth`)**: Re-aligns camera heading to 0° (True North) and re-orients pitch without drift.
+- **Shortest-Path Flight (`flyHomeShortestRoute`)**: Calculates minimal arc rotation across the 3D globe when flying back home.
+- **Surface Collision Detection & Floor**: Enabled `enableCollisionDetection = true` with `minimumZoomDistance = 50m` altitude floor to prevent the camera from clipping underground.
+- **Missing Tile Prevention**: Configured `maximumLevel: 16` on Esri tile providers to eliminate *"Map data not available yet"* placeholder graphics during close zoom.
 
-**M8 Polish** — presets, persistence, shortcuts, snapping, demo/offline mode, graceful
-Cesium failure fallback.
+### 🪟 Intelligent Auto-Align Window Layout Engine
+- **Flexible Tiling Algorithm (`computeAutoLayout`)**:
+  - Automatically calculates optimal non-overlapping positions `(x, y)` and sizes `(width, height)` for any number $N$ of open windows.
+  - Handles **1 window** (centered focus), **2 windows** (50/50 split), **3 windows** (1 main + 2 stacked columns), and **4+ windows** (dynamic $N$-matrix grid).
+- **Auto-Alignment Triggers**:
+  - Windows automatically position themselves when opened, closed, or when a workspace preset is applied.
+  - Added **`Auto-align open windows`** button under **Workspace ▾ -> Layout** menu.
+- **Smooth Layout Transitions**:
+  - Added CSS transitions (`transition: left 0.32s, top 0.32s, width 0.32s, height 0.32s`) for seamless window repositioning.
 
-## Keyboard
+---
+
+## ⌨️ Keyboard Shortcuts & Controls
 
 | Shortcut | Action |
 | --- | --- |
-| `⌘/Ctrl + K` | Command palette (windows, presets, camera, parcel ids) |
-| `⌘/Ctrl + 1..6` | Layers / Planning / Analysis / Scenario / AI / Compare |
-| `Esc` | Close focused window |
-| Double-click title bar | Maximize / restore |
-| Drag to screen edge | Snap left / right half, top = maximize |
+| `⌘/Ctrl + K` | Command palette (search tools, windows, presets, camera points) |
+| `⌘/Ctrl + 1..6` | Quick toggle windows (Layers / Planning / Analysis / Scenario / AI / Compare) |
+| `Esc` | Close focused floating window |
+| Double-click Title Bar | Maximize / restore window |
+| Drag to Screen Edge | Snap window to left/right half or top maximize |
 
-## Structure
+---
+
+## 📁 Repository Structure
 
 ```
-app/            layout, /workspace page
-cesium/         CesiumViewer + map-bridge (imperative React ⇄ Cesium API)
+app/            Next.js App Router (/workspace, globals.css, layout.tsx)
+cesium/         CesiumViewer.tsx (3D Globe), map-bridge.ts (imperative API bridge)
 components/
   layout/       Workspace, TopNavbar, WindowManager, Taskbar, CommandPalette
-  windows/      FloatingWindow + window registry
-  panels/       one panel per tool window
-  ui/           metric cards, bars, job progress
-stores/         window, layer, selection, scenario, analysis, job, ai, map (Zustand)
-lib/            api client, city model, mock engine, constants
-types/          domain contracts shared with the backend
+  windows/      FloatingWindow.tsx, window registry, auto-alignment logic
+  panels/       Tool panels (City, Layers, Planning, Scenario, Analysis, AI, etc.)
+  ui/           Metric cards, status progress, UI primitives
+stores/         Zustand state stores (window, layer, selection, scenario, analysis, job, ai, map)
+lib/            API client, city model, mock engine, constants
+public/data/    GeoJSON datasets (india-states.json, india-highways.json, pune-waterbodies.json)
+types/          TypeScript domain models and contracts
 ```
 
-## Swapping in the real backend
+---
 
-`lib/api/client.ts` tries `NEXT_PUBLIC_API_BASE_URL` first and falls back to
-`lib/mock.ts`. Implement `/city`, `/features/{id}`, `/scenarios`, `/planning/suitability`,
-`/analysis/accessibility`, `/analysis/risk` returning the shapes in `types/index.ts`
-and the UI switches over with no component changes.
+## 🔌 API & Backend Integration
+
+The frontend client in `lib/api/client.ts` attempts to connect to `NEXT_PUBLIC_API_BASE_URL`. If the backend is unavailable or not configured, it gracefully falls back to the deterministic mock engine in `lib/mock.ts` (`DEMO DATA` status indicator).
