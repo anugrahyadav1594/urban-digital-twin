@@ -78,23 +78,25 @@ NEXT_PUBLIC_CITY_LAT=18.5913
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Starts Next.js development server bound to `0.0.0.0:3000` with hot-reloading |
-| `npm run build` | Builds optimized production production bundle |
-| `npm run start` | Runs production server bound to `0.0.0.0:3000` |
+| `npm run dev` | **Primary command**: Starts Next.js development server bound to `0.0.0.0:3000` with hot-reloading |
+| `npm run build` | Compiles optimized Next.js production build |
+| `npm run start` | Runs production server bound to `0.0.0.0:3000` (*requires running `npm run build` first*) |
 | `npm run lint` | Runs Next.js ESLint validation check |
 | `node scripts/copy-cesium.mjs` | Copies static CesiumJS build files into `public/cesium/` |
 
+> ⚠️ **Note on `npm run start` vs `npm run dev`**: To run the application during development, use **`npm run dev`**. Running `npm run start` directly without first compiling a production build (`npm run build`) will result in a *"Could not find a production build"* error.
+
 ---
 
-### 5. Production Build & Deployment
+### 5. Production Build & Deployment (Optional)
 
-To verify the production build locally:
+If you want to create and test a production build:
 
 ```bash
-# Build production bundle
+# 1. Compile production build
 npm run build
 
-# Start production server
+# 2. Start production server
 npm run start
 ```
 
