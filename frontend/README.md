@@ -4,29 +4,103 @@ A desktop-style geospatial planning workspace featuring a full-viewport **Cesium
 
 ---
 
-## 🚀 Getting Started
+## 💻 Frontend Setup Guide
 
+### 1. Prerequisites
+
+Ensure your development environment meets the following requirements:
+
+- **Node.js**: `v20.0.0` or higher (`v22.x` recommended for optimal CesiumJS 1.144+ compatibility)
+- **Package Manager**: `npm` (v10+), `yarn`, or `pnpm`
+- **Modern Browser**: Chrome, Edge, Firefox, or Safari with WebGL 2.0 support enabled
+
+Check your installed Node.js version:
 ```bash
-npm install     # Installs dependencies & copies CesiumJS build into public/cesium
-npm run dev     # Starts Next.js dev server at http://localhost:3000 (auto-redirects to /workspace)
+node -v
+npm -v
 ```
-
-Node 20+ supported; Node 22+ recommended (CesiumJS engine requirement).
-
-### Environment Configuration (`.env.local`)
-
-Copy `.env.local.example` to `.env.local` to customize settings:
-
-| Variable | Description | Default / Fallback |
-| --- | --- | --- |
-| `NEXT_PUBLIC_CESIUM_ION_TOKEN` | Cesium Ion Access Token for world terrain & imagery | Empty → Uses CartoDB / Esri dark basemaps |
-| `NEXT_PUBLIC_API_BASE_URL` | FastAPI backend URL | Empty → Silently switches to offline deterministic engine (`DEMO DATA` badge) |
-| `NEXT_PUBLIC_CITY_LON` | Pilot city center longitude | `73.7389` (Pune, MH) |
-| `NEXT_PUBLIC_CITY_LAT` | Pilot city center latitude | `18.5913` (Pune, MH) |
 
 ---
 
-## ✨ Features & Recent Modifications
+### 2. Installation & Quick Start
+
+Navigate to the `frontend` directory and install all dependencies:
+
+```bash
+# 1. Change directory to frontend
+cd frontend
+
+# 2. Install dependencies (triggers postinstall script to copy Cesium static assets)
+npm install
+
+# 3. Start the development server
+npm run dev
+```
+
+The application will start at **`http://localhost:3000`** (which automatically redirects to **`http://localhost:3000/workspace`**).
+
+> **Note on CesiumJS Assets**: Running `npm install` automatically executes `node scripts/copy-cesium.mjs` via the `postinstall` hook. This copies required Cesium Workers, Widgets, Assets, and ThirdParty build files into `frontend/public/cesium`.
+
+If Cesium assets are missing or fail to load, manually trigger the copy script:
+```bash
+node scripts/copy-cesium.mjs
+```
+
+---
+
+### 3. Environment Variables Configuration
+
+Copy the example environment file to create your local environment config:
+
+```bash
+cp .env.local.example .env.local
+```
+
+Configure `.env.local` according to your environment:
+
+```env
+# Optional: Cesium Ion Access Token for World Terrain & High-Res Imagery
+# Leave empty to use default CartoDB / Esri dark basemaps without an API key
+NEXT_PUBLIC_CESIUM_ION_TOKEN=
+
+# Optional: FastAPI Backend URL
+# If empty or backend is offline, the UI silently falls back to the local deterministic mock engine ("DEMO DATA" badge)
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+
+# Target Pilot City Center Coordinates (Default: Pune, Maharashtra, India)
+NEXT_PUBLIC_CITY_LON=73.7389
+NEXT_PUBLIC_CITY_LAT=18.5913
+```
+
+---
+
+### 4. Available NPM Scripts
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Starts Next.js development server bound to `0.0.0.0:3000` with hot-reloading |
+| `npm run build` | Builds optimized production production bundle |
+| `npm run start` | Runs production server bound to `0.0.0.0:3000` |
+| `npm run lint` | Runs Next.js ESLint validation check |
+| `node scripts/copy-cesium.mjs` | Copies static CesiumJS build files into `public/cesium/` |
+
+---
+
+### 5. Production Build & Deployment
+
+To verify the production build locally:
+
+```bash
+# Build production bundle
+npm run build
+
+# Start production server
+npm run start
+```
+
+---
+
+## ✨ Features & Capabilities
 
 ### 📐 Compact Layout & Halved Bar Sizes
 - **Compact Top Navbar**: Height set to **`66px`** (`NAVBAR_HEIGHT = 66`).
@@ -94,11 +168,6 @@ components/
 stores/         Zustand state stores (window, layer, selection, scenario, analysis, job, ai, map)
 lib/            API client, city model, mock engine, constants
 public/data/    GeoJSON datasets (india-states.json, india-highways.json, pune-waterbodies.json)
+scripts/        Build helper scripts (copy-cesium.mjs)
 types/          TypeScript domain models and contracts
 ```
-
----
-
-## 🔌 API & Backend Integration
-
-The frontend client in `lib/api/client.ts` attempts to connect to `NEXT_PUBLIC_API_BASE_URL`. If the backend is unavailable or not configured, it gracefully falls back to the deterministic mock engine in `lib/mock.ts` (`DEMO DATA` status indicator).
