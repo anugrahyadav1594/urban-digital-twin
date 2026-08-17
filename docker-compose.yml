@@ -1,0 +1,46 @@
+# PostGIS for local development.
+#
+# Runs inside WSL, so no Windows firewall sits between your code and the
+# database - which is the usual cause of "connection timed out" on localhost.
+#
+#   docker compose up -d db     start
+#   docker compose logs -f db   watch
+#   docker compose down         stop (data survives)
+#   docker compose down -v      stop and DELETE all data
+
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    container_name: nagarx-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGIS_DB:-nagar_x_db}
+      POSTGRES_USER: ${POSTGIS_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGIS_PASSWORD:-postgres}
+    ports:
+      # Bind to 127.0.0.1 only: reachable from WSL, not exposed to the network.
+      - "127.0.0.1:${POSTGIS_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Applied automatically on FIRST start only (empty volume).
+      #
+      # WARNING: db/schema.sql must EXIST as a regular file before you run
+      # `docker compose up`. Docker materialises a missing bind-mount source
+      # as an empty DIRECTORY, which then breaks the tooling with
+      # IsADirectoryError and leaves the database uninitialised.
+      # `make preflight` checks this for you.
+      #
+      # Do not "fix" that by mounting ./db as a directory: the entrypoint runs
+      # `docker_process_init_files /docker-entrypoint-initdb.d/*`, a
+      # NON-recursive glob, so a subdirectory is skipped with "ignoring".
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      # The DB is "healthy" only once it accepts queries, not merely booted.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGIS_USER:-postgres} -d ${POSTGIS_DB:-nagar_x_db}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  pgdata:

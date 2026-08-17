@@ -1,38 +1,18 @@
-# Python
 __pycache__/
 *.py[cod]
 .venv/
-venv/
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-*.egg-info/
-
-# Node
 node_modules/
 .next/
 out/
-dist/
 build/
-
-# Env & secrets
+dist/
+*.tsbuildinfo
+frontend/public/cesium/
 .env
-.env.*
+.env.local
 !.env.example
-
-# Large geospatial artifacts — belong in object storage, never git
-data/raw/
-data/processed/
-data/tiles/
-*.tif
-*.tiff
-*.pbf
-*.laz
-*.las
-*.gpkg
-*.parquet
-
-# OS / editor
+*.log
 .DS_Store
-.idea/
 .vscode/
+.idea/
