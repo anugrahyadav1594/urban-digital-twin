@@ -298,7 +298,7 @@ def ingest_buildings(poly, engine, rep: Report, dry: bool) -> None:
 
     levels_col = _col("building:levels")
     height_col = _col("height")
-    of_col = _col("roof:levels")
+    roof_col = _col("roof:levels")
     type_col = _col("building")
     osmid_col = list(gdf.index)
 

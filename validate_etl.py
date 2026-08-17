@@ -127,11 +127,68 @@ def main() -> int:
                     f'line {anc.lineno}: dict written to "{table}" has '
                     f'key "{b}" which is not a column{near(b, cols)}')
 
-    # Undefined-name smoke test: compile only.
-    try:
-        compile(src, str(PATH), "exec")
-    except Exception as e:  # pragma: no cover
-        problems.append(f"compile failed: {e}")
+    # Undefined names. compile() does NOT catch these - it only checks
+    # syntax - so a dropped character inside an identifier (roof_col ->
+    # of_col) survives all the way to runtime. Resolve each function's
+    # loads against its own assignments plus module and builtin scope.
+    import builtins
+
+    # Implicit module globals that never appear as assignments.
+    module_names = set(dir(builtins)) | {
+        "__file__", "__name__", "__doc__", "__package__", "__spec__",
+        "__loader__", "__builtins__", "__debug__", "__path__",
+    }
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                module_names.add((a.asname or a.name).split(".")[0])
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            module_names.add(n.name)
+        elif isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.For,
+                            ast.withitem, ast.NamedExpr)):
+            # Covers  a = ...,  a, b = ...,  [a, b] = ...,  for a, b in ...
+            targets = []
+            if isinstance(n, ast.Assign):
+                targets = n.targets
+            elif isinstance(n, (ast.AugAssign, ast.AnnAssign)):
+                targets = [n.target]
+            elif isinstance(n, ast.For):
+                targets = [n.target]
+            elif isinstance(n, ast.withitem):
+                targets = [n.optional_vars] if n.optional_vars else []
+            elif isinstance(n, ast.NamedExpr):
+                targets = [n.target]
+            for t in targets:
+                for sub in ast.walk(t) if t is not None else []:
+                    if isinstance(sub, ast.Name):
+                        module_names.add(sub.id)
+
+    def check_fn(fn: ast.AST, outer: set[str]) -> None:
+        local = set(outer)
+        for a in ast.walk(fn):
+            if isinstance(a, ast.arg):
+                local.add(a.arg)
+            elif isinstance(a, ast.Name) and isinstance(a.ctx, (ast.Store, ast.Del)):
+                local.add(a.id)
+            elif isinstance(a, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                local.add(a.name)
+            elif isinstance(a, (ast.Import, ast.ImportFrom)):
+                for al in a.names:
+                    local.add((al.asname or al.name).split(".")[0])
+            elif isinstance(a, ast.ExceptHandler) and a.name:
+                local.add(a.name)
+            elif isinstance(a, (ast.Global, ast.Nonlocal)):
+                local.update(a.names)
+        for a in ast.walk(fn):
+            if isinstance(a, ast.Name) and isinstance(a.ctx, ast.Load):
+                if a.id not in local:
+                    problems.append(
+                        f"line {a.lineno}: undefined name \"{a.id}\""
+                        f"{near(a.id, sorted(local))}")
+
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            check_fn(n, module_names)
 
     seen = set()
     uniq = [p for p in problems if not (p in seen or seen.add(p))]
