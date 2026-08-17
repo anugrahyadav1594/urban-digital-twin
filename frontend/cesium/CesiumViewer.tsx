@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CITY_CENTER, ION_TOKEN } from "@/lib/constants";
 import { FACILITIES, FLOOD_ZONE, PARCELS, ROADS, ZONE_COLOR } from "@/lib/city-model";
+import { loadAllLive } from "./liveData";
 import { mapBridge } from "./map-bridge";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
@@ -209,7 +210,9 @@ export default function CesiumViewer() {
         const waterImageryLayer = viewer.imageryLayers.addImageryProvider(waterImageryProvider);
 
         // Load Indian Inter-State Boundaries ONLY (visible from country-wide zoom extent down to city level)
-        Cesium.GeoJsonDataSource.load("/data/india-states.json", {
+        const stateBoundaries = await fetch("/data/india-states.json", { method: "HEAD" })
+          .then((r) => r.ok).catch(() => false);
+        if (stateBoundaries) Cesium.GeoJsonDataSource.load("/data/india-states.json", {
           stroke: Cesium.Color.fromCssColorString("#cbd5e1").withAlpha(0.85),
           strokeWidth: 2.0,
           fill: Cesium.Color.TRANSPARENT,
@@ -847,6 +850,21 @@ export default function CesiumViewer() {
         });
 
         // initial layer visibility from the store
+        /* Replace the procedural city with real PostGIS geometry. The
+           synthetic entities above remain the offline fallback. */
+        try {
+          const drawn = await loadAllLive(Cesium, ds);
+          const total = Object.values(drawn).reduce((a, b) => a + b, 0);
+          if (total > 0) {
+            console.info("[cesium] live data drawn", drawn);
+            (window as any).__nagarx = { viewer, dataSources: ds, liveCounts: drawn };
+          } else {
+            console.warn("[cesium] backend returned no geometry - keeping demo city");
+          }
+        } catch (e) {
+          console.warn("[cesium] live layer load failed - keeping demo city", e);
+        }
+
         useLayerStore.getState().layers.forEach((l) => { if (ds[l.id]) ds[l.id].show = l.visible; });
 
         viewer.camera.setView({

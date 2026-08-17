@@ -9,6 +9,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#070b12" };
 
+import BackendStatusBanner from "@/components/ui/BackendStatusBanner";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
@@ -20,7 +22,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Script id="cesium-base-url" strategy="beforeInteractive">{`window.CESIUM_BASE_URL='/cesium';`}</Script>
         <Script src="/cesium/Cesium.js" strategy="beforeInteractive" />
       </head>
-      <body>{children}</body>
+      <body>
+        <BackendStatusBanner />
+        {children}
+      </body>
     </html>
   );
 }

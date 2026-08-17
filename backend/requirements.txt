@@ -1,0 +1,37 @@
+# NAGAR-X backend — pinned to the versions this stack was verified against.
+#
+# db/requirements.txt predates the backend and is missing geoalchemy2,
+# pydantic-settings, pyproj and ortools, so `pip install -r db/requirements.txt`
+# produces an app that fails at import. Install this file instead.
+
+# --- web layer ---
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+
+# --- persistence ---
+SQLAlchemy>=2.0.30,<3.0
+GeoAlchemy2>=0.15,<1.0
+psycopg2-binary>=2.9.9,<3.0
+
+# --- geospatial ---
+shapely>=2.0.4,<3.0
+pyproj>=3.6,<4.0
+geopandas>=1.0,<2.0
+
+# osmnx 2.x ONLY. The 1.x API differs (features_from_polygon raises
+# InsufficientResponseError instead of returning empty) and etl/ingest_osm.py
+# targets 2.x.
+osmnx>=2.0,<3.0
+
+# --- analysis engines ---
+networkx>=3.3,<4.0
+numpy>=1.26,<3.0
+scipy>=1.13,<2.0
+pandas>=2.2,<3.0
+ortools>=9.10
+
+# --- http ---
+requests>=2.32,<3.0
+httpx>=0.27,<1.0
