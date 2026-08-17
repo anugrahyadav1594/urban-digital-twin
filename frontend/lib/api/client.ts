@@ -44,5 +44,11 @@ export const api = {
     (await tryFetch<AnalysisResult>("/analysis/accessibility", { method: "POST", body: "{}" })) ?? runAccessibility(scenario),
 
   risk: async (scenario: Scenario): Promise<AnalysisResult> =>
-    (await tryFetch<AnalysisResult>("/analysis/risk", { method: "POST", body: "{}" })) ?? runRisk(scenario)
+    (await tryFetch<AnalysisResult>("/analysis/risk", { method: "POST", body: "{}" })) ?? runRisk(scenario),
+
+  agentPlan: async (prompt: string): Promise<any> =>
+    await tryFetch<any>("/agents/plan", {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    })
 };
