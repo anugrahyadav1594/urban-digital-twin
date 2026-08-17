@@ -119,6 +119,12 @@ export const api = {
     (await tryFetch<AnalysisResult>("/analysis/risk", { method: "POST", body: JSON.stringify({ scenario_id: scenario.id }) }, T_ANALYSIS)) ??
     runRisk(scenario),
 
+  agentPlan: async (prompt: string): Promise<any> =>
+    await tryFetch<any>("/agents/plan", {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    }),
+
   simulationPopulation: async (baseYear: number = 2025, horizonYear: number = 2035, annualRate: number = 0.025): Promise<any> =>
     (await tryFetch("/simulation/population", { method: "POST", body: JSON.stringify({ base_year: baseYear, horizon_year: horizonYear, annual_rate: annualRate }) }, T_ANALYSIS)) ?? null,
 

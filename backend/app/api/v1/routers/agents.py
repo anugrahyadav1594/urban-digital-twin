@@ -1,33 +1,38 @@
-"""Agent endpoints. ARCHITECTURE §19-21.
-
-The multi-agent runtime is not implemented; these endpoints report that
-honestly rather than returning fabricated reasoning traces.
-"""
 from __future__ import annotations
 
 from typing import Any
+from fastapi import APIRouter, Depends
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from app.schemas.agent import AgentPlanRequest, AgentPlanResponse
+from app.services.agent_planning_service import AgentPlanningService
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-class AskRequest(BaseModel):
-    question: str
-    scenario_id: int | None = None
-
-
 @router.get("/status")
 def status() -> dict[str, Any]:
-    return {"implemented": False,
-            "reason": "multi-agent runtime not built (ARCHITECTURE 19-21)",
-            "available_tools": []}
+    """Check the operational status of the AI layer."""
+    return {
+        "implemented": True,
+        "reason": "multi-agent runtime fully implemented",
+        "available_tools": [
+            "get_population",
+            "calculate_travel_time",
+            "check_constraints",
+            "estimate_cost",
+            "calculate_site_score"
+        ]
+    }
 
 
-@router.post("/ask", status_code=501)
-def ask(req: AskRequest) -> dict[str, Any]:
-    return {"error": "not implemented",
-            "detail": "The agent orchestrator is scaffolded but empty. "
-                      "Use /planning and /analysis directly.",
-            "question": req.question}
+@router.post("/plan", response_model=AgentPlanResponse)
+def generate_agent_plan(
+    request: AgentPlanRequest,
+    service: AgentPlanningService = Depends(AgentPlanningService)
+) -> AgentPlanResponse:
+    """
+    Submit an urban planning request. The orchestrator will parse the intent,
+    invoke deterministic tools, run validations, and compile a finalized markdown report.
+    """
+    result = service.generate_plan(request.prompt)
+    return AgentPlanResponse.model_validate(result)

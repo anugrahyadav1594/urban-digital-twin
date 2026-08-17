@@ -71,6 +71,16 @@ export default function AIPanel() {
       return;
     }
 
+    let agentResponseText = "";
+    try {
+      const agentRes = await (api as any).agentPlan(q);
+      if (agentRes && agentRes.report) {
+        agentResponseText = agentRes.report;
+      }
+    } catch (e) {
+      console.warn("Failed to reach backend AI layer, falling back to local simulation.", e);
+    }
+
     const facility = lower.includes("school") ? "School" : lower.includes("fire") ? "Fire Station" : "Hospital";
     const result = await api.suitability(
       { facility: facility as any, capacity: 250, minArea: 4000, maxTravelMin: 15, floodRule: "Exclude High", weights: { ...DEFAULT_WEIGHTS } },
@@ -84,7 +94,7 @@ export default function AIPanel() {
     push({
       role: "assistant",
       resultId: result.resultId,
-      text: top
+      text: agentResponseText || (top
         ? "Recommendation: " + top.label + " (score " + top.score.toFixed(1) + "/100).\n\n" +
           "Why:\n" +
           "• Catchment population score " + top.breakdown.Population + "/100\n" +
@@ -93,7 +103,7 @@ export default function AIPanel() {
           "• Coverage gap " + top.breakdown["Existing coverage"] + "/100 relative to existing " + facility.toLowerCase() + "s\n\n" +
           "Runners-up: " + result.entities.slice(1, 3).map((e) => e.label + " (" + e.score.toFixed(1) + ")").join(", ") + ".\n\n" +
           "Numbers produced by the deterministic GIS / network / optimisation tools — result " + result.resultId + " on " + result.datasetVersion + "."
-        : "No parcel satisfies the current constraint set. Relax the minimum land area or allow medium flood risk."
+        : "No parcel satisfies the current constraint set. Relax the minimum land area or allow medium flood risk.")
     });
     setThinking(false);
   };
