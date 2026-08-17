@@ -24,8 +24,12 @@ class Orchestrator:
         
     def execute(self, user_request: str) -> Dict[str, Any]:
         """Execute the complete vertical planning orchestration flow."""
+        print("[Orchestrator] Starting planning flow...")
+        
         # 1. Extract Planning Intent
+        print("[Orchestrator] Step 1: Extracting planning intent using PlanningAgent...")
         intent = self.planning_agent.plan(user_request)
+        print(f"[Orchestrator] Intent parsed: {intent.model_dump()}")
         
         # Fallback values if LLM leaves fields empty
         location = intent.location or "downtown"
@@ -33,6 +37,7 @@ class Orchestrator:
         constraints = intent.constraints or []
         
         # 2. Invoke Deterministic Tools
+        print("[Orchestrator] Step 2: Querying deterministic tools for spatial metrics...")
         # Demographic metrics
         pop_res = invoke_tool("get_population", {"location": location})
         
@@ -75,8 +80,11 @@ class Orchestrator:
             "site_score": score_res.score,
             "site_score_details": score_res.details,
         }
+        print(f"[Orchestrator] Deterministic metrics gathered: {deterministic_data}")
         
         # 3. Call Specialized Logical Agents to Interpret Deterministic Outputs
+        print("[Orchestrator] Step 3: Invoking specialized logical agents...")
+        print("  - Running GISAgent...")
         gis_interpretation = self.gis_agent.interpret(
             location=location,
             population=pop_res.population,
@@ -85,6 +93,7 @@ class Orchestrator:
             distance=travel_res.distance_km
         )
         
+        print("  - Running CostAgent...")
         cost_interpretation = self.cost_agent.interpret(
             facility_type=facility_type,
             scale="medium",
@@ -92,6 +101,7 @@ class Orchestrator:
             confidence=cost_res.confidence
         )
         
+        print("  - Running RiskAgent...")
         risk_interpretation = self.risk_agent.interpret(
             location=location,
             constraints=constraints,
@@ -106,15 +116,19 @@ class Orchestrator:
         }
         
         # 4. Critic Validation checks
+        print("[Orchestrator] Step 4: Validating results with CriticAgent...")
         validation = self.critic_agent.validate(deterministic_data, interpretations)
+        print(f"[Orchestrator] Critic validation status: {validation['status']}")
         
         # 5. Synthesize final markdown report
+        print("[Orchestrator] Step 5: Synthesizing final report with ReportAgent...")
         report = self.report_agent.generate_report(
             user_request=user_request,
             deterministic_data=deterministic_data,
             interpretations=interpretations,
             validation_status=validation
         )
+        print("[Orchestrator] Execution finished successfully.")
         
         return {
             "intent": intent.model_dump(),
