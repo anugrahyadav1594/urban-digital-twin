@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Layer, LayerKind } from "@/types";
 import { FACILITIES, PARCELS, ROADS, ZONE_COLOR, ZONE_LABEL } from "@/lib/city-model";
+import { api } from "@/lib/api/client";
 
 const initial: Layer[] = [
   { id: "buildings", name: "Buildings (3D)", group: "Base", visible: true, opacity: 1, color: "#8ea6c8", count: PARCELS.filter((p) => p.floors > 0).length },
@@ -26,6 +27,7 @@ type Store = {
   setVisible: (id: LayerKind, v: boolean) => void;
   setOpacity: (id: LayerKind, o: number) => void;
   setCount: (id: LayerKind, c: number) => void;
+  syncFromBackend: () => Promise<void>;
   soloGroup: (group: Layer["group"]) => void;
   reset: () => void;
 };
@@ -47,6 +49,22 @@ export const useLayerStore = create<Store>()(
         }),
       setOpacity: (id, o) => set((s) => ({ layers: s.layers.map((l) => (l.id === id ? { ...l, opacity: o } : l)) })),
       setCount: (id, c) => set((s) => ({ layers: s.layers.map((l) => (l.id === id ? { ...l, count: c } : l)) })),
+      /**
+       * Replace synthetic counts with real PostGIS row counts.
+       * Only counts are taken from the server; visibility/opacity/colour stay
+       * client-side so the user's toggles survive a refresh.
+       */
+      syncFromBackend: async () => {
+        const live = await api.listLayers();
+        if (!live) return;
+        const byId = new Map(live.map((l) => [String(l.id), l]));
+        set((s) => ({
+          layers: s.layers.map((l) => {
+            const m = byId.get(String(l.id));
+            return m && typeof m.count === "number" ? { ...l, count: m.count } : l;
+          })
+        }));
+      },
       soloGroup: (group) => set((s) => ({ layers: s.layers.map((l) => ({ ...l, visible: l.group === group })) })),
       reset: () => set({ layers: initial })
     }),

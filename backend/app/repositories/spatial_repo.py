@@ -201,6 +201,61 @@ class SpatialRepository:
             return None
         return (float(row[0]), float(row[1]), float(row[2]), float(row[3]))
 
+    # Layer name -> (table, columns exposed as GeoJSON properties).
+    # Whitelisted: the table name is interpolated into SQL, so it must never
+    # come straight from a URL path segment.
+    _LAYERS: dict[str, tuple[str, tuple[str, ...]]] = {
+        "roads": ("roads", ("id", "road_class", "lanes", "speed_limit", "surface")),
+        "buildings": ("buildings", ("id", "building_type", "land_use", "height_m",
+                                    "floors", "population_estimate")),
+        "facilities": ("facilities", ("id", "name", "type", "capacity",
+                                      "service_radius_m")),
+        "land_parcels": ("land_parcels", ("id", "land_use", "zoning",
+                                          "development_status", "slope_deg",
+                                          "flood_risk")),
+        "population_zones": ("population_zones", ("id", "population", "households",
+                                                  "density_per_sqkm")),
+        "planning_constraints": ("planning_constraints", ("id", "type", "severity")),
+        "administrative_areas": ("administrative_areas", ("id", "name", "type",
+                                                          "population")),
+        "water_bodies": ("water_bodies", ("id", "type", "seasonality")),
+    }
+
+    def layer_names(self) -> list[str]:
+        return sorted(self._LAYERS)
+
+    def features_geojson(self, layer: str,
+                         bbox: tuple[float, float, float, float] | None = None,
+                         limit: int = 500) -> dict[str, Any]:
+        """Return a layer as a GeoJSON FeatureCollection in EPSG:4326.
+
+        Serialisation happens in PostGIS (ST_AsGeoJSON) rather than Python.
+        Output stays in storage CRS: this feeds the map, not the engines.
+        """
+        if layer not in self._LAYERS:
+            raise KeyError(layer)
+        table, cols = self._LAYERS[layer]
+        prop_sql = ", ".join(f"'{c}', t.{c}" for c in cols)
+
+        where, params = "", {"limit": int(limit)}
+        if bbox is not None:
+            where = ("WHERE t.geometry && ST_MakeEnvelope"
+                     "(:minx, :miny, :maxx, :maxy, 4326)")
+            params.update(zip(("minx", "miny", "maxx", "maxy"), map(float, bbox)))
+
+        rows = self.s.execute(text(f"""
+            SELECT jsonb_build_object(
+                     'type', 'Feature',
+                     'geometry', ST_AsGeoJSON(t.geometry)::jsonb,
+                     'properties', jsonb_build_object({prop_sql})
+                   )
+            FROM {table} t
+            {where}
+            LIMIT :limit
+        """), params).scalars().all()
+        return {"type": "FeatureCollection", "layer": layer,
+                "crs": "EPSG:4326", "features": list(rows)}
+
     def counts(self) -> dict[str, int]:
         out: dict[str, int] = {}
         for name, model in [

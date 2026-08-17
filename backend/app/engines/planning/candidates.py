@@ -53,8 +53,20 @@ def generate_candidates(
         if facility_type is None or getattr(f, "type", None) == facility_type
     ]
 
+    # Travel times are computed ONCE for all parcels.
+    # Previously this ran inside the per-parcel loop, so the same
+    # zone-to-everywhere Dijkstra was recomputed for every candidate:
+    # 107 parcels x 99 zones = 10,593 searches instead of 99.
+    tt_columns: list[list[float | None]] | None = None
+    if graph is not None and population_zones and parcels:
+        from ..network.routing import travel_time_matrix
+        origins = [z.geometry.representative_point() for z in population_zones]
+        centroids = [p.geometry.centroid for p in parcels]
+        tt_columns = travel_time_matrix(
+            graph, origins, centroids, cutoff_seconds=travel_time_cutoff)
+
     out: list[Candidate] = []
-    for p in parcels:
+    for p_idx, p in enumerate(parcels):
         centroid = p.geometry.centroid
         ring = centroid.buffer(service_radius)
         pop, assumptions = population_within(ring, population_zones) if population_zones else (0.0, [])
@@ -63,10 +75,8 @@ def generate_candidates(
             if same_type else None
 
         tt_mean: float | None = None
-        if graph is not None and population_zones:
-            from ..network.routing import travel_time_matrix
-            origins = [z.geometry.representative_point() for z in population_zones]
-            col = travel_time_matrix(graph, origins, [centroid])
+        if tt_columns is not None:
+            col = [[row[p_idx]] for row in tt_columns]
             vals = [row[0] for row in col if row[0] is not None and row[0] <= travel_time_cutoff]
             weights = [
                 float(z.population or 0.0)

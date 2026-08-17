@@ -1,4 +1,5 @@
 "use client";
+import { useEffect } from "react";
 import { useLayerStore } from "@/stores/layer-store";
 import { useWindowStore } from "@/stores/window-store";
 import { SectionTitle } from "@/components/ui/Bits";
@@ -7,8 +8,11 @@ import type { Layer } from "@/types";
 const GROUPS: Layer["group"][] = ["Base", "Semantic", "Risk", "Planning"];
 
 export default function LayersPanel() {
-  const { layers, setVisible, setOpacity, reset } = useLayerStore();
+  const { layers, setVisible, setOpacity, reset, syncFromBackend } = useLayerStore();
   const openWindow = useWindowStore((s) => s.openWindow);
+
+  // Pull live row counts once the panel is on screen.
+  useEffect(() => { void syncFromBackend(); }, [syncFromBackend]);
 
   return (
     <div>

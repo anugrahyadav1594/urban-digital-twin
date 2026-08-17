@@ -5,14 +5,42 @@ from typing import Any, Sequence
 
 import networkx as nx
 
+try:                                    # optional; falls back to a linear scan
+    from scipy.spatial import cKDTree
+except ImportError:                     # pragma: no cover
+    cKDTree = None
+
+# Per-graph spatial index for nearest_node. Keyed by id(G) and invalidated by
+# node count, so a rebuilt graph never reuses a stale tree.
+_INDEX_CACHE: dict[int, tuple[int, Any, list]] = {}
+
+
+def _index(G: nx.DiGraph):
+    key = id(G)
+    hit = _INDEX_CACHE.get(key)
+    if hit is not None and hit[0] == G.number_of_nodes():
+        return hit[1], hit[2]
+    nodes = list(G.nodes)
+    tree = cKDTree(nodes) if (cKDTree is not None and nodes) else None
+    _INDEX_CACHE[key] = (G.number_of_nodes(), tree, nodes)
+    return tree, nodes
+
 
 def nearest_node(G: nx.DiGraph, point: Any) -> tuple[float, float] | None:
-    """Closest graph node to a shapely point (linear scan; fine at pilot scale)."""
+    """Closest graph node to a shapely point.
+
+    A linear scan is O(nodes) per call, which at city scale (12k nodes,
+    thousands of lookups) dominated runtime. Uses a cached KD-tree when SciPy
+    is available and falls back to the original scan otherwise.
+    """
     if G.number_of_nodes() == 0:
         return None
     px, py = point.x, point.y
+    tree, nodes = _index(G)
+    if tree is not None:
+        return tuple(nodes[int(tree.query((px, py))[1])])
     best, best_d = None, float("inf")
-    for n in G.nodes:
+    for n in nodes:
         d = (n[0] - px) ** 2 + (n[1] - py) ** 2
         if d < best_d:
             best, best_d = n, d
@@ -43,17 +71,32 @@ def travel_time(
 
 
 def travel_time_matrix(
-    G: nx.DiGraph, origins: Sequence[Any], destinations: Sequence[Any]
+    G: nx.DiGraph,
+    origins: Sequence[Any],
+    destinations: Sequence[Any],
+    cutoff_seconds: float | None = None,
 ) -> list[list[float | None]]:
-    """Seconds from each origin to each destination, via multi-source Dijkstra."""
+    """Seconds from each origin to each destination.
+
+    One Dijkstra per origin. `cutoff_seconds` bounds each search: anything
+    beyond the cutoff is None, which is what a caller filtering by a travel
+    time threshold wants anyway. Without it, every origin explores the whole
+    graph - at city scale that was ~99% wasted work.
+    """
     dest_nodes = [nearest_node(G, d) for d in destinations]
+    # Distinct sources only: many origins can snap to the same graph node.
+    cache: dict[Any, dict] = {}
     matrix: list[list[float | None]] = []
     for o in origins:
         s = nearest_node(G, o)
         if s is None:
             matrix.append([None] * len(destinations))
             continue
-        lengths = nx.single_source_dijkstra_path_length(G, s, weight="time")
+        lengths = cache.get(s)
+        if lengths is None:
+            lengths = nx.single_source_dijkstra_path_length(
+                G, s, cutoff=cutoff_seconds, weight="time")
+            cache[s] = lengths
         matrix.append([
             None if dn is None else lengths.get(dn) for dn in dest_nodes
         ])
