@@ -129,11 +129,24 @@ class Orchestrator:
             validation_status=validation
         )
         print("[Orchestrator] Execution finished successfully.")
+
+        steps = [
+            {"id": "s0", "agent": "Planner", "text": "Extracted planning intent", "state": "done", "tool": "decompose_goal", "output": str(intent.model_dump())},
+            {"id": "s1", "agent": "GIS", "text": "Ran spatial site score and demographic check", "state": "done", "tool": "calculate_site_score", "output": str(score_res.model_dump())},
+            {"id": "s2", "agent": "Network", "text": "Calculated catchment travel time and distance", "state": "done", "tool": "calculate_travel_time", "output": str(travel_res.model_dump())},
+            {"id": "s3", "agent": "Risk", "text": "Checked environmental and zoning constraints", "state": "done", "tool": "check_constraints", "output": str(constraint_res.model_dump())},
+            {"id": "s4", "agent": "Optimization", "text": "Evaluated site metrics against multi-criteria profile", "state": "done", "tool": "calculate_site_score", "output": str(score_res.score)},
+            {"id": "s5", "agent": "Cost", "text": "Estimated capital expenditure", "state": "done", "tool": "estimate_cost", "output": str(cost_res.model_dump())},
+            {"id": "s6", "agent": "Validator", "text": "Validated result consistency with CriticAgent", "state": "done", "tool": "validate_result", "output": str(validation["status"])},
+        ]
         
         return {
             "intent": intent.model_dump(),
             "deterministic_metrics": deterministic_data,
             "interpretations": interpretations,
             "validation": validation,
-            "report": report
+            "report": report,
+            "steps": steps,
+            "result_id": f"res_ai_{location}",
+            "comparison": None,
         }

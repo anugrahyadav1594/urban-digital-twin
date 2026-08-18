@@ -178,6 +178,9 @@ class Scenario(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text)
     base_version: Mapped[str | None] = mapped_column(String(50))
     created_by: Mapped[str | None] = mapped_column(String(100))
+    horizon: Mapped[int | None] = mapped_column(Integer, default=2035)
+    population_growth_pct: Mapped[float | None] = mapped_column(Numeric(5, 2), default=2.5)
+    status: Mapped[str | None] = mapped_column(String(50), default="draft")
 
 
 class ScenarioChange(Base, TimestampMixin):

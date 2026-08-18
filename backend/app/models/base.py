@@ -19,6 +19,30 @@ NAMING_CONVENTION = {
 
 STORAGE_SRID = 4326
 
+import geoalchemy2.elements
+if not hasattr(geoalchemy2.elements, "_patched_wkb_init"):
+    _orig_wkb_init = geoalchemy2.elements.WKBElement.__init__
+
+    def _patched_wkb_init(self, data, srid=-1, extended=None):
+        if isinstance(data, str) and ("SRID=" in data or any(data.startswith(k) for k in ("POINT", "LINESTRING", "POLYGON", "MULTI"))):
+            from shapely.wkt import loads as wkt_loads
+            from shapely.wkb import dumps as wkb_dumps
+            if "SRID=" in data:
+                parts = data.split(";", 1)
+                try:
+                    srid = int(parts[0].replace("SRID=", ""))
+                except Exception:
+                    pass
+                geom = wkt_loads(parts[1])
+            else:
+                geom = wkt_loads(data)
+            data = wkb_dumps(geom, hex=True, srid=srid if srid != -1 else 4326)
+        _orig_wkb_init(self, data, srid=srid, extended=extended)
+
+    geoalchemy2.elements.WKBElement.__init__ = _patched_wkb_init
+    geoalchemy2.elements._patched_wkb_init = True
+
+
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)

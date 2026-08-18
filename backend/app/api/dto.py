@@ -223,20 +223,21 @@ def city_dto(counts: dict[str, int], extent: tuple | None,
 
 def scenario_dto(row: dict[str, Any],
                  changes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    status_map = {"draft": "draft", "frozen": "review",
-                  "analyzed": "approved", "archived": "approved"}
+    raw_status = str(row.get("status") or "draft").lower()
+    valid_statuses = ("draft", "review", "approved", "reopened", "baseline")
+    status = raw_status if raw_status in valid_statuses else "draft"
     return {
         "id": str(row.get("id")),
         "name": row.get("name") or "Untitled",
-        "status": status_map.get(str(row.get("status", "draft")).lower(), "draft"),
+        "status": status,
         "createdAt": str(row.get("created_at") or _now()),
         "horizon": int(row.get("horizon") or 2035),
         "populationGrowthPct": float(row.get("population_growth_pct") or 2.5),
         "changes": [
             {
                 "id": str(c.get("id")),
-                "type": _changtype(c.get("object_type")),
-                "label": f"{c.get('operation','?')} {c.get('object_type','?')}",
+                "type": _change_type(c.get("object_type")),
+                "label": c.get("label") or f"{c.get('operation','?')} {c.get('object_type','?')}",
                 "detail": str(c.get("parameters") or {})[:200],
             }
             for c in (changes or [])

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { api } from "@/lib/api/client";
 import { DEFAULT_WEIGHTS, SUITABILITY_STAGES } from "@/lib/mock";
 import { mapBridge } from "@/cesium/map-bridge";
@@ -9,7 +9,7 @@ import { useMapStore, type DrawMode } from "@/stores/map-store";
 import { useScenarioStore } from "@/stores/scenario-store";
 import { useWindowStore } from "@/stores/window-store";
 import { Field, SectionTitle } from "@/components/ui/Bits";
-import type { SuitabilityRequest } from "@/types";
+import type { SuitabilityRequest, AnalysisResult } from "@/types";
 
 const TOOLS: { id: DrawMode; label: string }[] = [
   { id: "select", label: "SELECT" },
@@ -31,13 +31,15 @@ export default function PlanningPanel() {
   });
   const [advanced, setAdvanced] = useState(false);
   const [road, setRoad] = useState({ type: "Arterial", lanes: 4, speed: 50 });
+  const [roadProposalResult, setRoadProposalResult] = useState<AnalysisResult | null>(null);
+  const [analyzingRoad, setAnalyzingRoad] = useState(false);
 
   const { drawMode, setDrawMode, drawnPath } = useMapStore();
   const { startJob, jobs } = useJobStore();
   const addResult = useAnalysisStore((s) => s.addResult);
   const openWindow = useWindowStore((s) => s.openWindow);
-  const { addChange } = useScenarioStore();
-  const activeScenario = useScenarioStore((s) => s.scenarios.find((x) => x.id === s.activeId)!);
+  const { addChange, scenarios, activeId } = useScenarioStore();
+  const activeScenario = scenarios.find((x) => x.id === activeId) ?? scenarios[0] ?? { id: "1", name: "Base City" };
   const busy = jobs.some((j) => j.state === "running");
 
   const findSites = () => {
@@ -51,9 +53,35 @@ export default function PlanningPanel() {
     });
   };
 
-  const roadLengthKm = drawnPath.length > 1
-    ? drawnPath.slice(1).reduce((s, p, i) => s + Math.hypot((p[0] - drawnPath[i][0]) * 105.6, (p[1] - drawnPath[i][1]) * 111), 0)
-    : 0;
+  useEffect(() => {
+    if (drawnPath.length > 1) {
+      const runRoadAnalysis = async () => {
+        setAnalyzingRoad(true);
+        try {
+          const lineGeoJSON = {
+            type: "LineString",
+            coordinates: drawnPath.map((pt) => [pt[0], pt[1]])
+          };
+          const res = await api.roadProposal({
+            geometry: lineGeoJSON,
+            road_type: road.type,
+            lanes: road.lanes,
+            speed: road.speed,
+            scenario_id: activeScenario.id
+          });
+          setRoadProposalResult(res);
+        } catch (err) {
+          console.error("Road analysis failed:", err);
+          setRoadProposalResult(null);
+        } finally {
+          setAnalyzingRoad(false);
+        }
+      };
+      runRoadAnalysis();
+    } else {
+      setRoadProposalResult(null);
+    }
+  }, [drawnPath, road.type, road.lanes, road.speed, activeScenario.id]);
 
   return (
     <div>
@@ -118,9 +146,6 @@ export default function PlanningPanel() {
               </span>
             </span>
           </div>
-          <div className="muted" style={{ fontSize: 10, marginTop: -6, marginBottom: 10 }}>
-            Relative weights — the engine normalizes them, so they need not sum to 100.
-          </div>
 
           <SectionTitle>
             <span style={{ cursor: "pointer" }} onClick={() => setAdvanced(!advanced)}>
@@ -151,23 +176,10 @@ export default function PlanningPanel() {
                   value={(req.allowedZoning ?? []).join(", ")}
                   onChange={(e) => setReq({ ...req, allowedZoning: e.target.value.split(",").map((z) => z.trim()).filter(Boolean) })} />
               </Field>
-              <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, marginBottom: 5 }}>
-                <input type="checkbox" checked={req.enforceMaxTravel ?? false}
-                  onChange={(e) => setReq({ ...req, enforceMaxTravel: e.target.checked })} />
-                Reject sites over the max travel time (hard rule)
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5 }}>
-                <input type="checkbox" checked={req.useNetwork ?? true}
-                  onChange={(e) => setReq({ ...req, useNetwork: e.target.checked })} />
-                Route on the road network (off = straight-line distance)
-              </label>
             </div>
           )}
 
           <button className="btn primary wide" disabled={busy} onClick={findSites}>{busy ? "RUNNING…" : "FIND SITES"}</button>
-          <div className="muted" style={{ fontSize: 10.5, marginTop: 6, textAlign: "center" }}>
-            POST /planning/suitability → job → result → map highlight
-          </div>
         </>
       ) : (
         <>
@@ -185,28 +197,45 @@ export default function PlanningPanel() {
             {drawMode === "road" ? "DRAWING… CLICK ON THE MAP" : "DRAW ALIGNMENT"}
           </button>
 
-          {drawnPath.length > 1 && (
+          {analyzingRoad && (
+            <div className="muted" style={{ fontSize: 11, margin: "10px 0" }}>Running backend GIS spatial intersection analysis (POST /planning/road)…</div>
+          )}
+
+          {roadProposalResult && !analyzingRoad && (
             <>
-              <SectionTitle>Road proposal</SectionTitle>
-              <div className="kv"><span className="k">Length</span><span className="v">{roadLengthKm.toFixed(2)} km</span></div>
-              <div className="kv"><span className="k">Affected parcels</span><span className="v">{Math.round(roadLengthKm * 9)}</span></div>
-              <div className="kv"><span className="k">Affected buildings</span><span className="v">{Math.round(roadLengthKm * 2.8)}</span></div>
-              <div className="kv"><span className="k">Connectivity impact</span><span className="v" style={{ color: "var(--good)" }}>+{Math.round(roadLengthKm * 4.3)}%</span></div>
-              <div className="kv"><span className="k">Avg travel time</span><span className="v" style={{ color: "var(--good)" }}>-{Math.round(roadLengthKm * 3.3)}%</span></div>
-              <div className="kv"><span className="k">Emergency access</span><span className="v" style={{ color: "var(--good)" }}>+{Math.round(roadLengthKm * 5.2)}%</span></div>
-              <div className="kv"><span className="k">Flood exposure</span><span className="v">Low</span></div>
-              <div className="kv"><span className="k">Indicative cost</span><span className="v">₹{Math.round(roadLengthKm * 9.6)} Cr</span></div>
+              <SectionTitle>{roadProposalResult.title}</SectionTitle>
+              {roadProposalResult.metrics.map((m) => (
+                <div key={m.key} className="kv">
+                  <span className="k">{m.label}</span>
+                  <span className="v" style={{ color: m.better === "up" ? "var(--good)" : undefined }}>{String(m.value)}</span>
+                </div>
+              ))}
+
+              <div style={{ fontSize: 11, margin: "8px 0", lineHeight: 1.5 }} className="muted">
+                {roadProposalResult.explanation}
+              </div>
 
               <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
                 <button className="btn primary" style={{ flex: 1 }}
-                  onClick={() => {
-                    addChange({ type: "road", label: road.type + " link " + roadLengthKm.toFixed(1) + " km", detail: road.lanes + " lanes · " + road.speed + " km/h" });
+                  onClick={async () => {
+                    await addChange({
+                      type: "road",
+                      label: roadProposalResult.title,
+                      detail: `${road.lanes} lanes · ${road.speed} km/h`,
+                      parameters: {
+                        geometry: roadProposalResult.geometry,
+                        road_type: road.type,
+                        lanes: road.lanes,
+                        speed: road.speed,
+                        result_id: roadProposalResult.resultId
+                      }
+                    });
                     openWindow("changes");
                     setDrawMode("select");
                   }}>
                   ADD TO {activeScenario.name.toUpperCase()}
                 </button>
-                <button className="btn ghost" onClick={() => { mapBridge.clearProposals(); useMapStore.getState().setDrawnPath([]); }}>Clear</button>
+                <button className="btn ghost" onClick={() => { mapBridge.clearProposals(); useMapStore.getState().setDrawnPath([]); setRoadProposalResult(null); }}>Clear</button>
               </div>
             </>
           )}

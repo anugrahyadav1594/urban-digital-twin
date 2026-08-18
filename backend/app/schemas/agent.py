@@ -12,3 +12,6 @@ class AgentPlanResponse(BaseModel):
     interpretations: Dict[str, str] = Field(..., description="Specialized agent interpretations of metrics.")
     validation: Dict[str, Any] = Field(..., description="Critic validation status and safety checks.")
     report: str = Field(..., description="Synthesized Markdown executive report.")
+    steps: list[Dict[str, Any]] = Field(default_factory=list, description="Structured execution steps.")
+    result_id: str | None = Field(None, description="Associated analysis result ID.")
+    comparison: Dict[str, Any] | None = Field(None, description="Real scenario comparison results if applicable.")
