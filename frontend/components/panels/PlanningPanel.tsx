@@ -22,7 +22,10 @@ const TOOLS: { id: DrawMode; label: string }[] = [
 ];
 
 export default function PlanningPanel() {
-  const [tab, setTab] = useState<"suitability" | "road">("suitability");
+  const [tab, setTab] = useState<"suitability" | "road" | "optimization">("suitability");
+  const [optFacility, setOptFacility] = useState("Hospital");
+  const [optObjective, setOptObjective] = useState("p_median");
+  const [numFac, setNumFac] = useState(3);
   const [req, setReq] = useState<SuitabilityRequest>({
     facility: "Hospital", capacity: 250, minArea: 4000, maxTravelMin: 15,
     floodRule: "Exclude High", weights: { ...DEFAULT_WEIGHTS },
@@ -33,6 +36,7 @@ export default function PlanningPanel() {
   const [road, setRoad] = useState({ type: "Arterial", lanes: 4, speed: 50 });
   const [roadProposalResult, setRoadProposalResult] = useState<AnalysisResult | null>(null);
   const [analyzingRoad, setAnalyzingRoad] = useState(false);
+  const [roadError, setRoadError] = useState<string | null>(null);
 
   const { drawMode, setDrawMode, drawnPath } = useMapStore();
   const { startJob, jobs } = useJobStore();
@@ -54,9 +58,11 @@ export default function PlanningPanel() {
   };
 
   useEffect(() => {
+    let canceled = false;
     if (drawnPath.length > 1) {
       const runRoadAnalysis = async () => {
         setAnalyzingRoad(true);
+        setRoadError(null);
         try {
           const lineGeoJSON = {
             type: "LineString",
@@ -69,18 +75,26 @@ export default function PlanningPanel() {
             speed: road.speed,
             scenario_id: activeScenario.id
           });
-          setRoadProposalResult(res);
-        } catch (err) {
-          console.error("Road analysis failed:", err);
-          setRoadProposalResult(null);
+          if (!canceled) {
+            setRoadProposalResult(res);
+            mapBridge.showRoadProposal(res.geometry || lineGeoJSON);
+          }
+        } catch (err: any) {
+          if (!canceled) {
+            console.error("Road analysis failed:", err);
+            setRoadError(err.message || "Road analysis failed on backend");
+            setRoadProposalResult(null);
+          }
         } finally {
-          setAnalyzingRoad(false);
+          if (!canceled) setAnalyzingRoad(false);
         }
       };
       runRoadAnalysis();
     } else {
       setRoadProposalResult(null);
+      setRoadError(null);
     }
+    return () => { canceled = true; };
   }, [drawnPath, road.type, road.lanes, road.speed, activeScenario.id]);
 
   return (
@@ -88,6 +102,7 @@ export default function PlanningPanel() {
       <div className="tabs">
         <button className={"tab" + (tab === "suitability" ? " on" : "")} onClick={() => setTab("suitability")}>Site suitability</button>
         <button className={"tab" + (tab === "road" ? " on" : "")} onClick={() => setTab("road")}>Road / infrastructure</button>
+        <button className={"tab" + (tab === "optimization" ? " on" : "")} onClick={() => setTab("optimization")}>Facility location</button>
       </div>
 
       <SectionTitle>Toolbar</SectionTitle>
@@ -181,7 +196,7 @@ export default function PlanningPanel() {
 
           <button className="btn primary wide" disabled={busy} onClick={findSites}>{busy ? "RUNNING…" : "FIND SITES"}</button>
         </>
-      ) : (
+      ) : tab === "road" ? (
         <>
           <div style={{ display: "flex", gap: 8 }}>
             <Field label="Road type">
@@ -199,6 +214,12 @@ export default function PlanningPanel() {
 
           {analyzingRoad && (
             <div className="muted" style={{ fontSize: 11, margin: "10px 0" }}>Running backend GIS spatial intersection analysis (POST /planning/road)…</div>
+          )}
+
+          {roadError && (
+            <div style={{ padding: 10, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 6, margin: "10px 0", fontSize: 12, color: "var(--warn)" }}>
+              Road Analysis Error: {roadError}
+            </div>
           )}
 
           {roadProposalResult && !analyzingRoad && (
@@ -239,6 +260,52 @@ export default function PlanningPanel() {
               </div>
             </>
           )}
+        </>
+      ) : (
+        <>
+          <SectionTitle>Facility location optimization</SectionTitle>
+          <Field label="Facility type">
+            <select className="input" value={optFacility} onChange={(e) => setOptFacility(e.target.value)}>
+              {["Hospital", "School", "Fire Station", "Water Treatment"].map((f) => <option key={f}>{f}</option>)}
+            </select>
+          </Field>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Field label="Objective / Method">
+              <select className="input" value={optObjective} onChange={(e) => setOptObjective(e.target.value)}>
+                <option value="p_median">P-Median (Min distance)</option>
+                <option value="max_coverage">Max Coverage (Population)</option>
+                <option value="mcda">MCDA Multi-Criteria</option>
+              </select>
+            </Field>
+            <Field label="Facilities count">
+              <input className="input" type="number" min={1} max={10} value={numFac} onChange={(e) => setNumFac(Number(e.target.value))} />
+            </Field>
+          </div>
+          <button
+            className="btn primary wide"
+            disabled={busy}
+            onClick={() => {
+              openWindow("jobs");
+              startJob(`${optFacility} location optimization`, "optimization", [
+                { key: "candidate", label: "Filtering candidate parcels", state: "pending" },
+                { key: "mcda", label: "Evaluating MCDA criteria", state: "pending" },
+                { key: "rank", label: "Ranking optimal facility locations", state: "pending" }
+              ], async () => {
+                const res = await api.optimizeFacilities(optFacility, optObjective, numFac);
+                if (res) {
+                  addResult(res);
+                  if (res.entities) mapBridge.showCandidates(res.entities);
+                  openWindow("analysis");
+                  openWindow("results");
+                }
+              });
+            }}
+          >
+            {busy ? "OPTIMIZING…" : "RUN FACILITY OPTIMIZATION"}
+          </button>
+          <div className="muted" style={{ fontSize: 10.5, marginTop: 8, textAlign: "center" }}>
+            POST /optimization/facility-location → MCDA candidate scoring & map highlight
+          </div>
         </>
       )}
     </div>

@@ -129,6 +129,12 @@ class ScenarioService:
         )
         res = compare_scenarios(per_scenario, prov)
         out = res.to_dict()
+        for r in out.get("records", []):
+            sid_raw = r.get("scenario_id")
+            if sid_raw and str(sid_raw).isdigit():
+                scen_rec = self.scenarios.get(int(sid_raw))
+                if scen_rec and scen_rec.get("name"):
+                    r["scenario_name"] = scen_rec["name"]
         if persist:
             out["result_id"] = self.results.save(res, None)
             self.s.commit()

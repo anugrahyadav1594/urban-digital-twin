@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
 import { SectionTitle, Empty } from "@/components/ui/Bits";
 import { useScenarioStore } from "@/stores/scenario-store";
-import type { AnalysisResult } from "@/types";
+import type { AnalysisResult, ComparedScenario } from "@/types";
 
 export default function ComparisonPanel() {
   const { scenarios, activeId, setActive } = useScenarioStore();
@@ -25,6 +25,11 @@ export default function ComparisonPanel() {
 
   const runComparison = async (a: string, b: string) => {
     if (!a || !b) return;
+    if (a === b) {
+      setError("Please select two distinct scenarios to compare.");
+      setComparisonResult(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -48,8 +53,27 @@ export default function ComparisonPanel() {
   const scenA = scenarios.find((s) => s.id === scenAId) ?? scenarios[0];
   const scenB = scenarios.find((s) => s.id === scenBId) ?? scenarios[1];
 
-  const winnerEntity = comparisonResult?.entities?.[0];
-  const winnerName = winnerEntity ? winnerEntity.label : (scenA?.name ?? "Scenario A");
+  const comparedList = comparisonResult?.scenarios || [];
+  const recA = comparedList.find((s) => String(s.scenarioId) === String(scenAId)) || comparedList[0];
+  const recB = comparedList.find((s) => String(s.scenarioId) === String(scenBId)) || comparedList[1];
+  const bestScen = comparedList.find((s) => s.rank === 1) || recA;
+
+  // Extract all unique metric keys
+  const metricKeys = Array.from(new Set([
+    ...Object.keys(recA?.metrics || {}),
+    ...Object.keys(recB?.metrics || {})
+  ]));
+
+  const formatMetricName = (key: string) => {
+    return key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+  };
+
+  const formatValue = (val: number | null | undefined) => {
+    if (val === null || val === undefined) return "—";
+    if (Math.abs(val) >= 1000) return val.toLocaleString();
+    if (Number.isInteger(val)) return String(val);
+    return val.toFixed(2);
+  };
 
   return (
     <div>
@@ -74,11 +98,11 @@ export default function ComparisonPanel() {
         </div>
       </div>
 
-      {loading && <Empty>Querying backend comparison engine (POST /scenarios/compare)…</Empty>}
+      {loading && <Empty>Computing trade-off matrix on backend (POST /scenarios/compare)…</Empty>}
 
       {error && (
         <div style={{ padding: 10, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 6, marginBottom: 12, fontSize: 12, color: "var(--warn)" }}>
-          Comparison failed: {error}
+          Comparison warning: {error}
         </div>
       )}
 
@@ -89,26 +113,46 @@ export default function ComparisonPanel() {
             <thead>
               <tr>
                 <th>Metric</th>
-                <th className="num">{scenA?.name ?? "Plan A"}</th>
-                <th className="num">{scenB?.name ?? "Plan B"}</th>
+                <th className="num">{recA?.name || scenA?.name || "Scenario A"}</th>
+                <th className="num">{recB?.name || scenB?.name || "Scenario B"}</th>
               </tr>
             </thead>
             <tbody>
-              {comparisonResult.metrics.map((m) => (
-                <tr key={m.key}>
-                  <td>{m.label}</td>
-                  <td className="num">{String(m.value)} {m.unit ?? ""}</td>
-                  <td className="num">{String(m.value)} {m.unit ?? ""}</td>
+              {metricKeys.length === 0 && (
+                <tr><td colSpan={3} style={{ textAlign: "center" }} className="muted">No metrics to display</td></tr>
+              )}
+              {metricKeys.map((key) => {
+                const valA = recA?.metrics?.[key];
+                const valB = recB?.metrics?.[key];
+                const aWins = (valA ?? 0) > (valB ?? 0);
+                const bWins = (valB ?? 0) > (valA ?? 0);
+                return (
+                  <tr key={key}>
+                    <td>{formatMetricName(key)}</td>
+                    <td className="num" style={{ color: aWins ? "var(--good)" : undefined }}>
+                      {formatValue(valA)}
+                    </td>
+                    <td className="num" style={{ color: bWins ? "var(--good)" : undefined }}>
+                      {formatValue(valB)}
+                    </td>
+                  </tr>
+                );
+              })}
+              {recA && recB && (
+                <tr className="win">
+                  <td><strong>Overall Engine Score</strong></td>
+                  <td className="num"><strong>{(recA.score * 100).toFixed(1)}%</strong></td>
+                  <td className="num"><strong>{(recB.score * 100).toFixed(1)}%</strong></td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
 
           <div style={{ marginTop: 12, padding: 10, border: "1px solid rgba(52,211,153,.35)", borderRadius: 7, background: "rgba(52,211,153,.08)" }}>
             <div className="row">
-              <strong style={{ letterSpacing: ".1em" }}>PROPOSED STATE → {winnerName.toUpperCase()}</strong>
-              {scenAId && (
-                <button className="btn ghost" style={{ padding: "3px 8px" }} onClick={() => setActive(scenAId)}>
+              <strong style={{ letterSpacing: ".1em" }}>RECOMMENDED → {(bestScen?.name || "SCENARIO A").toUpperCase()}</strong>
+              {bestScen?.scenarioId && (
+                <button className="btn ghost" style={{ padding: "3px 8px" }} onClick={() => setActive(bestScen.scenarioId)}>
                   Make Active
                 </button>
               )}
@@ -121,7 +165,7 @@ export default function ComparisonPanel() {
       )}
 
       {!comparisonResult && !loading && !error && (
-        <Empty>Select two distinct scenarios above to compute multi-criteria trade-offs using the backend engine.</Empty>
+        <Empty>Select two distinct scenarios above to compute trade-offs on the backend.</Empty>
       )}
     </div>
   );

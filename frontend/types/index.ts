@@ -62,9 +62,17 @@ export type ResultLayer = { id: string; type: "heatmap" | "points" | "polygons" 
 
 export type ResultEntity = { entityId: string; score: number; label: string; position: { lon: number; lat: number }; breakdown: Record<string, number> };
 
+export type ComparedScenario = {
+  scenarioId: string;
+  name: string;
+  rank: number;
+  score: number;
+  metrics: Record<string, number | null>;
+};
+
 export type AnalysisResult = {
   resultId: string;
-  type: "suitability" | "accessibility" | "impact" | "risk" | "optimization" | "road_proposal";
+  type: "suitability" | "accessibility" | "impact" | "risk" | "optimization" | "road_proposal" | "scenario_comparison";
   title: string;
   datasetVersion: string;
   scenarioVersion: string;
@@ -72,6 +80,7 @@ export type AnalysisResult = {
   metrics: Metric[];
   layers: ResultLayer[];
   entities: ResultEntity[];
+  scenarios?: ComparedScenario[];
   explanation: string;
   geometry?: any;
 };

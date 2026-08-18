@@ -4,7 +4,7 @@
  */
 import { API_BASE } from "../constants";
 import { CITY, featureFromId } from "../city-model";
-import { SCENARIOS, runAccessibility, runRisk, runSuitability } from "../mock";
+import { SCENARIOS, runAccessibility, runEmergency, runRisk, runSuitability } from "../mock";
 import type { AnalysisResult, CityInfo, FeatureRecord, Scenario, SuitabilityRequest, Layer, Job } from "@/types";
 
 export const BACKEND_REQUIRED = process.env.NEXT_PUBLIC_BACKEND_REQUIRED !== "false";
@@ -172,7 +172,7 @@ export const api = {
     }, T_ANALYSIS);
     if (res) return res;
     if (BACKEND_REQUIRED) throw new Error("Failed to compute emergency response coverage on backend");
-    return runAccessibility(scenario);
+    return runEmergency(scenario);
   },
 
   risk: async (scenario: Scenario): Promise<AnalysisResult> => {

@@ -39,17 +39,7 @@ def create_job(req: CreateJobRequest) -> dict[str, Any]:
 def get_job(job_id: str) -> dict[str, Any]:
     job = JobService.get_job(job_id)
     if not job:
-        # Synthesize completed job if queried by result ID or existing token
-        return {
-            "id": job_id,
-            "title": "Analysis Job",
-            "kind": "analysis",
-            "progress": 100,
-            "state": "succeeded",
-            "stages": [{"key": "completed", "label": "Analysis complete", "state": "done"}],
-            "result_id": job_id,
-            "error": None,
-        }
+        raise HTTPException(404, f"Job '{job_id}' not found")
     return job
 
 

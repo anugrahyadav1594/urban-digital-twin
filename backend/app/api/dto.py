@@ -170,8 +170,47 @@ def analysis_dto(result: dict[str, Any], title: str,
     """EngineResult.to_dict() -> AnalysisResult the frontend can render."""
     prov = result.get("provenance") or {}
     rtype = _TYPE_MAP.get(result.get("result_type", ""), "impact")
+    if result.get("result_type") == "scenario_comparison":
+        rtype = "scenario_comparison"
     records = result.get("records") or []
     warnings = result.get("warnings") or []
+
+    if rtype == "scenario_comparison":
+        scenarios_out = []
+        for r in records:
+            sid = str(r.get("scenario_id") or "?")
+            sname = r.get("scenario_name") or f"Scenario {sid}"
+            m_dict = {}
+            raw_metrics = r.get("metrics") or {}
+            for mk, mv in raw_metrics.items():
+                if isinstance(mv, dict):
+                    m_dict[mk] = mv.get("raw")
+                elif isinstance(mv, (int, float)):
+                    m_dict[mk] = mv
+            scenarios_out.append({
+                "scenarioId": sid,
+                "name": sname,
+                "rank": r.get("rank", 1),
+                "score": float(r.get("overall_score") or 0.0),
+                "metrics": m_dict
+            })
+        best = scenarios_out[0] if scenarios_out else None
+        best_name = best["name"] if best else "Scenario A"
+        explanation = f"Scenario Comparison complete. {best_name} ranked #1 with an overall score of {best['score']:.2f} across evaluated criteria." if best else f"{title}."
+        return {
+            "resultId": str(result.get("result_id") or ""),
+            "type": rtype,
+            "title": title,
+            "datasetVersion": str(prov.get("dataset_version", "1")),
+            "scenarioVersion": "comparison",
+            "createdAt": result.get("timestamp") or _now(),
+            "metrics": [metric_dto(m) for m in (result.get("metrics") or [])],
+            "layers": list(layers),
+            "entities": [],
+            "scenarios": scenarios_out,
+            "explanation": explanation,
+            "warnings": warnings,
+        }
 
     explanation = f"{title}."
     if prov.get("algorithm"):

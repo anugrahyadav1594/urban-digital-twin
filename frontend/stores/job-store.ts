@@ -5,13 +5,13 @@ import type { Job, JobStage } from "@/types";
 
 type Store = {
   jobs: Job[];
-  startJob: (title: string, kind: string, stages: JobStage[], onDone: () => Promise<void> | void) => Promise<string>;
+  startJob: (title: string, kind: string, stages: JobStage[], taskFn: () => Promise<void>) => Promise<string>;
   clearDone: () => void;
 };
 
 export const useJobStore = create<Store>((set, get) => ({
   jobs: [],
-  startJob: async (title, kind, stages, onDone) => {
+  startJob: async (title, kind, stages, taskFn) => {
     let backendJob: Job;
     try {
       backendJob = await api.createJob(title, kind, stages);
@@ -29,31 +29,36 @@ export const useJobStore = create<Store>((set, get) => ({
 
     set((s) => ({ jobs: [backendJob, ...s.jobs].slice(0, 12) }));
 
+    const jobId = backendJob.id;
+    let finished = false;
+
     const pollInterval = setInterval(async () => {
+      if (finished) return;
       try {
-        const latest = await api.getJob(backendJob.id);
+        const latest = await api.getJob(jobId);
         if (latest) {
           set((s) => ({
-            jobs: s.jobs.map((j) => (j.id === backendJob.id ? { ...j, ...latest } : j))
+            jobs: s.jobs.map((j) => (j.id === jobId ? { ...j, ...latest } : j))
           }));
           if (latest.state === "succeeded" || latest.state === "failed") {
+            finished = true;
             clearInterval(pollInterval);
-            await onDone();
           }
-          return;
         }
-      } catch (err) {
-        console.warn("Job status poll error:", err);
+      } catch (err: any) {
+        // HTTP 404 or backend failure
+        console.warn(`Job ${jobId} status poll notice:`, err?.message);
       }
     }, 800);
 
-    // Run task logic asynchronously
+    // Execute real work asynchronously
     (async () => {
       try {
-        await onDone();
+        await taskFn();
+        finished = true;
         clearInterval(pollInterval);
         set((s) => ({
-          jobs: s.jobs.map((j) => (j.id === backendJob.id ? {
+          jobs: s.jobs.map((j) => (j.id === jobId ? {
             ...j,
             state: "succeeded",
             progress: 100,
@@ -61,9 +66,10 @@ export const useJobStore = create<Store>((set, get) => ({
           } : j))
         }));
       } catch (err: any) {
+        finished = true;
         clearInterval(pollInterval);
         set((s) => ({
-          jobs: s.jobs.map((j) => (j.id === backendJob.id ? {
+          jobs: s.jobs.map((j) => (j.id === jobId ? {
             ...j,
             state: "failed",
             error: err.message || "Job execution failed"
@@ -72,7 +78,7 @@ export const useJobStore = create<Store>((set, get) => ({
       }
     })();
 
-    return backendJob.id;
+    return jobId;
   },
   clearDone: () => set((s) => ({ jobs: s.jobs.filter((j) => j.state === "running" || j.state === "queued") }))
 }));
