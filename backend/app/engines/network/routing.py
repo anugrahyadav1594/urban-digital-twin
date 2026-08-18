@@ -47,6 +47,61 @@ def nearest_node(G: nx.DiGraph, point: Any) -> tuple[float, float] | None:
     return best
 
 
+# Largest strongly connected component, cached per graph. Routing between two
+# nodes of this set is always possible; snapping to it is what stops a station
+# that sits on a driveway or an unnoded service road from reporting
+# "unreachable" when the city network is perfectly fine.
+# Keyed by id(G) but validated on (nodes, edges): degrade_graph() returns a
+# copy with the same node count and fewer edges, and CPython recycles ids, so
+# node count alone would hand back the undegraded core.
+_CORE_CACHE: dict[int, tuple[tuple[int, int], frozenset]] = {}
+
+
+def routable_core(G: nx.DiGraph) -> frozenset:
+    """Nodes of the largest strongly connected component of G."""
+    key = id(G)
+    sig = (G.number_of_nodes(), G.number_of_edges())
+    hit = _CORE_CACHE.get(key)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
+    if G.number_of_nodes() == 0:
+        core: frozenset = frozenset()
+    else:
+        core = frozenset(max(nx.strongly_connected_components(G), key=len))
+    _CORE_CACHE[key] = (sig, core)
+    return core
+
+
+def nearest_node_in(
+    G: nx.DiGraph, point: Any, allowed: frozenset | set | None = None
+) -> tuple[tuple[float, float] | None, float]:
+    """Nearest node restricted to `allowed`, plus the snap distance in metres.
+
+    Real road data always contains fragments that touch nothing: service
+    spurs, driveways, segments whose endpoints missed each other after
+    reprojection. Snapping blindly to the closest node drops a responder onto
+    one of those islands and every route from it fails. Restricting the snap
+    to a mutually reachable set trades a few metres of positional accuracy for
+    an answer that exists.
+    """
+    if G.number_of_nodes() == 0:
+        return None, 0.0
+    px, py = point.x, point.y
+    if not allowed:
+        n = nearest_node(G, point)
+        if n is None:
+            return None, 0.0
+        return n, ((n[0] - px) ** 2 + (n[1] - py) ** 2) ** 0.5
+    best, best_d = None, float("inf")
+    for n in allowed:
+        d = (n[0] - px) ** 2 + (n[1] - py) ** 2
+        if d < best_d:
+            best, best_d = n, d
+    if best is None:
+        return None, 0.0
+    return best, best_d ** 0.5
+
+
 def shortest_path(
     G: nx.DiGraph, source: Any, target: Any, weight: str = "time"
 ) -> tuple[list[tuple[float, float]], float] | None:
@@ -101,3 +156,5 @@ def travel_time_matrix(
             None if dn is None else lengths.get(dn) for dn in dest_nodes
         ])
     return matrix
+
+

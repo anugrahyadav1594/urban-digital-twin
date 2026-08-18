@@ -22,16 +22,16 @@ export type BridgeImpl = {
   setLayerOpacity: (id: LayerKind, opacity: number) => void;
   showCandidates: (entities: ResultEntity[]) => void;
   clearCandidates: () => void;
-  showRoadProposal: (geometry: any) => void;
-  clearProposals: () => void;
   setYear: (year: number) => void;
   setDrawMode: (mode: string) => void;
   placeFacility: (type: string) => void;
+  clearProposals: () => void;
   rotateGlobe: (dir: "up" | "down" | "left" | "right" | "rollLeft" | "rollRight") => void;
   toggleAutoRotate: () => void;
   toggleHighways: (show?: boolean) => void;
   showEmergencyRoutes: (routes: EmergencyRoute[]) => void;
   showHazard: (hazard: HazardFootprint | null) => void;
+  showNetworkImpact: (impact: NetworkImpact | null) => void;
   clearEmergency: () => void;
 };
 
@@ -53,6 +53,14 @@ export type HazardFootprint = {
   label?: string;
 };
 
+/** Roads the hazard closes, slows, or that a measure reopens - drawn on the map
+ *  so the disruption is visible instead of being only a number in a table. */
+export type NetworkImpact = {
+  blocked?: number[][][];
+  slowed?: number[][][];
+  reopened?: number[][][];
+} | null;
+
 const noop = () => {};
 let impl: Partial<BridgeImpl> = {};
 
@@ -73,7 +81,6 @@ export const mapBridge = {
   setLayerOpacity: (id: LayerKind, o: number) => (impl.setLayerOpacity ?? noop)(id, o),
   showCandidates: (e: ResultEntity[]) => (impl.showCandidates ?? noop)(e),
   clearCandidates: () => (impl.clearCandidates ?? noop)(),
-  showRoadProposal: (g: any) => (impl.showRoadProposal ?? noop)(g),
   setYear: (y: number) => (impl.setYear ?? noop)(y),
   setDrawMode: (m: string) => (impl.setDrawMode ?? noop)(m),
   placeFacility: (t: string) => (impl.placeFacility ?? noop)(t),
@@ -83,5 +90,6 @@ export const mapBridge = {
   toggleHighways: (show?: boolean) => (impl.toggleHighways ?? noop)(show),
   showEmergencyRoutes: (r: EmergencyRoute[]) => (impl.showEmergencyRoutes ?? noop)(r),
   showHazard: (h: HazardFootprint | null) => (impl.showHazard ?? noop)(h),
+  showNetworkImpact: (n: NetworkImpact) => (impl.showNetworkImpact ?? noop)(n),
   clearEmergency: () => (impl.clearEmergency ?? noop)()
 };

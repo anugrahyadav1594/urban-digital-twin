@@ -268,8 +268,8 @@ def simulate_disaster(
 
     redundancy = _measure_factor(hazard.measures, "roads_blocked", hazard.type)
     if redundancy < 1.0 and blocked_ids:
-        keep = int(round(len(blocked_ids) * redundancy       # Deterministic: keep the lowest ids blocked, reopen the rest.
-        blocked_ids = sorted(blocked_ids)[:keep]
+            keep = int(round(len(blocked_ids) * redundancy))       # Deterministic: keep the lowest ids blocked, reopen the rest.
+            blocked_ids = sorted(blocked_ids)[:keep]
 
     res.records = hit[:200] + fac_hit
     res.add("hazard_radius_m", round(hazard.radius_m, 1), "m")
