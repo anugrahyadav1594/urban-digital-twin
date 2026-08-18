@@ -27,10 +27,24 @@ class ScenarioService:
         self.cfg = get_settings()
 
     # ---------------- lifecycle ----------------
-    def create(self, name: str, description: str | None = None) -> dict[str, Any]:
-        sid = self.scenarios.create(name, description)
+    def create(self, name: str, description: str | None = None,
+               horizon: int = 2035, population_growth_pct: float = 2.5) -> dict[str, Any]:
+        sid = self.scenarios.create(
+            name=name, description=description, horizon=horizon,
+            population_growth_pct=population_growth_pct, status="draft"
+        )
         self.s.commit()
-        return {"scenario_id": sid, "name": name, "status": "created"}
+        return {
+            "scenario_id": sid, "id": str(sid), "name": name, "status": "draft",
+            "horizon": horizon, "populationGrowthPct": population_growth_pct,
+            "description": description
+        }
+
+    def update(self, scenario_id: int, **kwargs) -> dict[str, Any] | None:
+        out = self.scenarios.update(scenario_id, **kwargs)
+        if out:
+            self.s.commit()
+        return out
 
     def add_change(self, scenario_id: int, object_type: str, operation: str,
                    parameters: dict[str, Any],
@@ -115,6 +129,12 @@ class ScenarioService:
         )
         res = compare_scenarios(per_scenario, prov)
         out = res.to_dict()
+        for r in out.get("records", []):
+            sid_raw = r.get("scenario_id")
+            if sid_raw and str(sid_raw).isdigit():
+                scen_rec = self.scenarios.get(int(sid_raw))
+                if scen_rec and scen_rec.get("name"):
+                    r["scenario_name"] = scen_rec["name"]
         if persist:
             out["result_id"] = self.results.save(res, None)
             self.s.commit()

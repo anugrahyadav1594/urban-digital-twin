@@ -87,12 +87,27 @@ class ScenarioRepository:
 
     def create(self, name: str, description: str | None = None,
                base_version: str = "v1.0",
-               created_by: str = "planner_admin") -> int:
+               created_by: str = "planner_admin",
+               horizon: int = 2035,
+               population_growth_pct: float = 2.5,
+               status: str = "draft") -> int:
         row = Scenario(name=name, description=description,
-                       base_version=base_version, created_by=created_by)
+                       base_version=base_version, created_by=created_by,
+                       horizon=horizon, population_growth_pct=population_growth_pct,
+                       status=status)
         self.s.add(row)
         self.s.flush()
         return int(row.id)
+
+    def update(self, scenario_id: int, **kwargs) -> dict[str, Any] | None:
+        row = self.s.get(Scenario, scenario_id)
+        if row is None:
+            return None
+        for k, v in kwargs.items():
+            if v is not None and hasattr(row, k):
+                setattr(row, k, v)
+        self.s.flush()
+        return row.as_dict()
 
     def get(self, scenario_id: int) -> dict[str, Any] | None:
         row = self.s.get(Scenario, scenario_id)

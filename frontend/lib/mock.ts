@@ -119,6 +119,26 @@ export function runAccessibility(scenario: Scenario): AnalysisResult {
   };
 }
 
+export function runEmergency(scenario: Scenario): AnalysisResult {
+  const g = 1 + scenario.populationGrowthPct / 100;
+  return {
+    resultId: uid("res"), type: "accessibility", title: "[DEMO] Emergency Response Coverage (8 min)",
+    datasetVersion: CITY.datasetVersion, scenarioVersion: scenario.id, createdAt: new Date().toISOString(),
+    metrics: [
+      { key: "cov", label: "Population within 8 min emergency response", value: Math.round(54 / g * 1.15), unit: "%", delta: 8, better: "up" },
+      { key: "avg", label: "Average emergency response time", value: 9.4, unit: "min", delta: -2.1, better: "down" },
+      { key: "stations", label: "Active fire/EMS stations", value: 4 },
+      { key: "uncov", label: "Uncovered high-density zones", value: "3 wards" }
+    ],
+    layers: [{ id: "emergency_catchments", type: "polygons", label: "8-min emergency catchments" }],
+    entities: PARCELS.filter((p) => p.population > 500).slice(0, 5).map((p) => ({
+      entityId: p.id, score: Math.round(50 + (p.population % 40)), label: "EMS Response Cluster " + p.ward,
+      position: { lon: p.lon, lat: p.lat }, breakdown: { ResponseTime: 11.2, Population: p.population }
+    })),
+    explanation: "[DEMO DATA] Emergency coverage is evaluated against an 8-minute blue-light response threshold from active fire and ambulance stations."
+  };
+}
+
 export function runRisk(scenario: Scenario): AnalysisResult {
   const high = PARCELS.filter((p) => p.flood === "High");
   return {
@@ -157,14 +177,4 @@ export const SCENARIOS: Scenario[] = [
       { id: "c6", type: "zoning", label: "Rezone 12 parcels R2 → R3", detail: "East infill belt" }
     ]
   }
-];
-
-export const COMPARISON_ROWS = [
-  { metric: "Population served", base: "62%", a: "89%", b: "85%", better: "a" },
-  { metric: "Avg travel time", base: "31 min", a: "22 min", b: "24 min", better: "a" },
-  { metric: "Flood exposure", base: "—", a: "Low", b: "Medium", better: "a" },
-  { metric: "Land consumed", base: "—", a: "8,200 m²", b: "6,900 m²", better: "b" },
-  { metric: "Connectivity", base: "—", a: "+18%", b: "+12%", better: "a" },
-  { metric: "Estimated cost", base: "—", a: "₹42 Cr", b: "₹36 Cr", better: "b" },
-  { metric: "Emergency access", base: "—", a: "+22%", b: "+14%", better: "a" }
 ];

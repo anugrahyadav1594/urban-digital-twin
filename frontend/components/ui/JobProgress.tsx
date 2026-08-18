@@ -22,6 +22,11 @@ export default function JobProgress({ job }: { job: Job }) {
           <span className="mono" style={{ fontSize: 11 }}>{job.progress}%</span>
         </div>
       </div>
+      {job.error && (
+        <div style={{ marginTop: 6, fontSize: 11, color: "var(--warn)", background: "rgba(239,68,68,.1)", padding: "4px 8px", borderRadius: 4 }}>
+          Error: {job.error}
+        </div>
+      )}
     </div>
   );
 }

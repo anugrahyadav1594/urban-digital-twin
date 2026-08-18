@@ -9,16 +9,6 @@ import { useScenarioStore } from "@/stores/scenario-store";
 import { useWindowStore } from "@/stores/window-store";
 import type { AgentStep } from "@/types";
 
-const PIPELINE: { agent: AgentStep["agent"]; text: string; tool: string }[] = [
-  { agent: "Planner", text: "Understanding planning objective and constraints…", tool: "decompose_goal" },
-  { agent: "GIS", text: "Finding candidate parcels (area, zoning, ownership)…", tool: "get_candidate_parcels" },
-  { agent: "Network", text: "Calculating catchment accessibility and travel times…", tool: "calculate_travel_time" },
-  { agent: "Risk", text: "Checking flood and environmental constraints…", tool: "check_constraints" },
-  { agent: "Optimization", text: "Ranking candidates by weighted multi-criteria score…", tool: "calculate_site_score" },
-  { agent: "Cost", text: "Estimating capital and land acquisition cost…", tool: "estimate_cost" },
-  { agent: "Validator", text: "Cross-checking results against dataset version…", tool: "validate_result" }
-];
-
 const SUGGESTIONS = [
   "Where should we build a new hospital?",
   "Which wards are underserved by emergency services?",
@@ -27,10 +17,11 @@ const SUGGESTIONS = [
 
 export default function AIPanel() {
   const [input, setInput] = useState("");
-  const { messages, push, updateLast, setSteps, thinking, setThinking } = useAIStore();
+  const { messages, push, setSteps, thinking, setThinking } = useAIStore();
   const addResult = useAnalysisStore((s) => s.addResult);
   const openWindow = useWindowStore((s) => s.openWindow);
-  const scenario = useScenarioStore((s) => s.scenarios.find((x) => x.id === s.activeId)!);
+  const { scenarios, activeId } = useScenarioStore();
+  const scenario = scenarios.find((x) => x.id === activeId) ?? scenarios[0] ?? { id: "1", name: "Base City" };
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { logRef.current?.scrollTo({ top: 1e6, behavior: "smooth" }); }, [messages, thinking]);
@@ -42,70 +33,75 @@ export default function AIPanel() {
     setThinking(true);
     openWindow("trace");
 
-    const steps: AgentStep[] = [];
     const lower = q.toLowerCase();
-    const wantsComparison = lower.includes("compare") || lower.includes("plan a");
+    const wantsComparison = lower.includes("compare") || lower.includes("plan a") || lower.includes("plan b");
 
-    for (let i = 0; i < PIPELINE.length; i++) {
-      const p = PIPELINE[i];
-      steps.push({ id: "s" + i, agent: p.agent, text: p.text, state: "running", tool: p.tool });
-      setSteps(steps.map((s, idx) => ({ ...s, state: idx === steps.length - 1 ? "running" : "done" })));
-      await new Promise((r) => setTimeout(r, 420 + Math.random() * 300));
+    if (wantsComparison && scenarios.length >= 2) {
+      try {
+        const idA = scenarios[0].id;
+        const idB = scenarios[1].id;
+        const comp = await api.compareScenarios([idA, idB]);
+        openWindow("comparison");
+        const winner = comp?.entities?.[0]?.label ?? scenarios[0].name;
+        push({
+          role: "assistant",
+          text: `Backend Scenario Comparison Result:\n\n${comp?.explanation ?? "Comparison finished."}\n\nTop Scenario: ${winner}`
+        });
+      } catch (err: any) {
+        push({ role: "assistant", text: `Comparison failed: ${err.message || "Backend error"}` });
+      } finally {
+        setThinking(false);
+      }
+      return;
     }
-    setSteps(steps.map((s) => ({ ...s, state: "done" })));
 
-    if (wantsComparison) {
-      openWindow("comparison");
-      push({
-        role: "assistant",
-        text:
-          "Plan A wins 5 of 7 criteria.\n\n" +
-          "• Population served 89% vs 85%\n" +
-          "• Average travel time 22 min vs 24 min\n" +
-          "• Emergency access +22% vs +14%\n" +
-          "• Cost ₹42 Cr vs ₹36 Cr (Plan B cheaper)\n\n" +
-          "Recommendation: adopt Plan A unless the capital ceiling is hard-capped below ₹40 Cr. " +
-          "All figures come from the comparison engine on dataset ds_2026.02."
-      });
+    try {
+      const agentRes = await api.agentPlan(q);
+      if (agentRes) {
+        if (agentRes.steps && Array.isArray(agentRes.steps)) {
+          setSteps(agentRes.steps as AgentStep[]);
+        }
+        push({
+          role: "assistant",
+          resultId: agentRes.result_id,
+          text: agentRes.report || "AI Plan complete."
+        });
+        setThinking(false);
+        return;
+      }
+    } catch (e: any) {
+      console.warn("Backend AI service error:", e);
+      push({ role: "assistant", text: `AI Planning error: ${e.message || "Failed to execute AI plan on backend."}` });
       setThinking(false);
       return;
     }
 
-    let agentResponseText = "";
+    // Fallback deterministic suitability analysis using live backend
     try {
-      const agentRes = await (api as any).agentPlan(q);
-      if (agentRes && agentRes.report) {
-        agentResponseText = agentRes.report;
+      const facility = lower.includes("school") ? "School" : lower.includes("fire") ? "Fire Station" : "Hospital";
+      const result = await api.suitability(
+        { facility: facility as any, capacity: 250, minArea: 4000, maxTravelMin: 15, floodRule: "Exclude High", weights: { ...DEFAULT_WEIGHTS } },
+        scenario
+      );
+      addResult(result);
+      if (result.entities && result.entities.length > 0) {
+        mapBridge.showCandidates(result.entities);
       }
-    } catch (e) {
-      console.warn("Failed to reach backend AI layer, falling back to local simulation.", e);
+      openWindow("results");
+
+      const top = result.entities?.[0];
+      push({
+        role: "assistant",
+        resultId: result.resultId,
+        text: top
+          ? `Recommendation: ${top.label} (score ${top.score.toFixed(1)}/100).\n\n${result.explanation}`
+          : "No parcel satisfies the current constraint set."
+      });
+    } catch (err: any) {
+      push({ role: "assistant", text: `Analysis failed: ${err.message || "Backend unreachable"}` });
+    } finally {
+      setThinking(false);
     }
-
-    const facility = lower.includes("school") ? "School" : lower.includes("fire") ? "Fire Station" : "Hospital";
-    const result = await api.suitability(
-      { facility: facility as any, capacity: 250, minArea: 4000, maxTravelMin: 15, floodRule: "Exclude High", weights: { ...DEFAULT_WEIGHTS } },
-      scenario
-    );
-    addResult(result);
-    mapBridge.showCandidates(result.entities);
-    openWindow("results");
-
-    const top = result.entities[0];
-    push({
-      role: "assistant",
-      resultId: result.resultId,
-      text: agentResponseText || (top
-        ? "Recommendation: " + top.label + " (score " + top.score.toFixed(1) + "/100).\n\n" +
-          "Why:\n" +
-          "• Catchment population score " + top.breakdown.Population + "/100\n" +
-          "• Accessibility " + top.breakdown.Accessibility + "/100 within the 15-minute threshold\n" +
-          "• Flood constraint " + top.breakdown["Flood risk"] + "/100 (high-risk parcels excluded)\n" +
-          "• Coverage gap " + top.breakdown["Existing coverage"] + "/100 relative to existing " + facility.toLowerCase() + "s\n\n" +
-          "Runners-up: " + result.entities.slice(1, 3).map((e) => e.label + " (" + e.score.toFixed(1) + ")").join(", ") + ".\n\n" +
-          "Numbers produced by the deterministic GIS / network / optimisation tools — result " + result.resultId + " on " + result.datasetVersion + "."
-        : "No parcel satisfies the current constraint set. Relax the minimum land area or allow medium flood risk.")
-    });
-    setThinking(false);
   };
 
   return (
@@ -114,7 +110,7 @@ export default function AIPanel() {
         {messages.map((m) => (
           <div key={m.id} className={"bubble " + (m.role === "user" ? "user" : "ai")}>{m.text}</div>
         ))}
-        {thinking && <div className="bubble ai pulse">running deterministic planning tools…</div>}
+        {thinking && <div className="bubble ai pulse">running backend AI & deterministic planning pipeline…</div>}
         {!thinking && messages.length <= 1 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
             {SUGGESTIONS.map((s) => (

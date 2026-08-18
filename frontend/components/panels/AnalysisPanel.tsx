@@ -17,10 +17,22 @@ const ACCESS_STAGES: JobStage[] = [
   { key: "agg", label: "Population aggregation", state: "pending" },
   { key: "val", label: "Validation", state: "pending" }
 ];
-const RISK_STAGES: JobStage[] = [
-  { key: "dem", label: "Terrain / DEM sampling", state: "pending" },
-  { key: "hyd", label: "Hydrological overlay", state: "pending" },
-  { key: "exp", label: "Exposure aggregation", state: "pending" }
+
+const EMERGENCY_STAGES: JobStage[] = [
+  { key: "graph", label: "Loading emergency network", state: "pending" },
+  { key: "dist", label: "Response catchment evaluation", state: "pending" },
+  { key: "val", label: "Coverage verification", state: "pending" }
+];
+
+const RESILIENCE_STAGES: JobStage[] = [
+  { key: "topo", label: "Analyzing graph topology", state: "pending" },
+  { key: "crit", label: "Identifying critical junctions & edges", state: "pending" },
+  { key: "exp", label: "Resilience scoring", state: "pending" }
+];
+
+const DEMAND_STAGES: JobStage[] = [
+  { key: "pop", label: "Population zone demand mapping", state: "pending" },
+  { key: "cap", label: "Capacity deficit calculation", state: "pending" }
 ];
 
 export default function AnalysisPanel() {
@@ -29,17 +41,38 @@ export default function AnalysisPanel() {
   const { startJob, jobs } = useJobStore();
   const openWindow = useWindowStore((s) => s.openWindow);
   const select = useSelectionStore((s) => s.select);
-  const scenario = useScenarioStore((s) => s.scenarios.find((x) => x.id === s.activeId)!);
+  const { scenarios, activeId: activeScenId } = useScenarioStore();
+  const scenario = scenarios.find((x) => x.id === activeScenId) ?? scenarios[0] ?? { id: "1", name: "Base City" };
   const [sel, setSel] = useState<string | null>(null);
   const busy = jobs.some((j) => j.state === "running");
   const result = results.find((r) => r.resultId === activeId) ?? results[0] ?? null;
 
-  const run = (kind: "accessibility" | "risk" | "suitability") => {
+  const run = (kind: "accessibility" | "emergency" | "resilience" | "demand") => {
     openWindow("jobs");
-    const stages = kind === "accessibility" ? ACCESS_STAGES : kind === "risk" ? RISK_STAGES : SUITABILITY_STAGES;
-    const title = kind === "accessibility" ? "Emergency accessibility" : kind === "risk" ? "Flood risk exposure" : "Site suitability";
+    let stages = ACCESS_STAGES;
+    let title = "Accessibility Analysis";
+    if (kind === "emergency") {
+      stages = EMERGENCY_STAGES;
+      title = "Emergency Coverage Analysis";
+    } else if (kind === "resilience") {
+      stages = RESILIENCE_STAGES;
+      title = "Network Resilience Analysis";
+    } else if (kind === "demand") {
+      stages = DEMAND_STAGES;
+      title = "Infrastructure Demand Analysis";
+    }
+
     startJob(title, kind, stages, async () => {
-      const r = kind === "accessibility" ? await api.accessibility(scenario) : await api.risk(scenario);
+      let r;
+      if (kind === "accessibility") {
+        r = await api.accessibility(scenario);
+      } else if (kind === "emergency") {
+        r = await api.emergency(scenario);
+      } else if (kind === "resilience") {
+        r = await api.risk(scenario);
+      } else {
+        r = await api.demand(scenario);
+      }
       addResult(r);
       mapBridge.showCandidates(r.entities);
     });
@@ -49,7 +82,9 @@ export default function AnalysisPanel() {
     <div>
       <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         <button className="btn ghost" disabled={busy} onClick={() => run("accessibility")}>Accessibility</button>
-        <button className="btn ghost" disabled={busy} onClick={() => run("risk")}>Flood risk</button>
+        <button className="btn ghost" disabled={busy} onClick={() => run("emergency")}>Emergency Coverage</button>
+        <button className="btn ghost" disabled={busy} onClick={() => run("resilience")}>Network Resilience</button>
+        <button className="btn ghost" disabled={busy} onClick={() => run("demand")}>Demand</button>
         <button className="btn ghost" onClick={() => openWindow("planning")}>Site suitability…</button>
         <button className="btn ghost" onClick={() => { mapBridge.clearCandidates(); }}>Clear map</button>
       </div>

@@ -32,23 +32,66 @@ class CompareRequest(BaseModel):
     facility_type: str = "hospital"
 
 
+class ScenarioUpdate(BaseModel):
+    name: str | None = None
+    status: str | None = None
+    horizon: int | None = None
+    populationGrowthPct: float | None = None
+    description: str | None = None
+
+
 @router.get("/scenarios")
 def list_scenarios(repo: ScenarioRepo) -> list[dict[str, Any]]:
     return [scenario_dto(r, repo.changes(int(r["id"]))) for r in repo.list()]
 
 
 @router.post("/scenarios", status_code=201)
-def create_scenario(body: ScenarioCreate, svc: Scenarios) -> dict[str, Any]:
-    out = svc.create(body.name, body.description)
-    return {"scenario_id": out["scenario_id"], "id": str(out["scenario_id"]),
-            "name": body.name, "status": "draft"}
+def create_scenario(body: ScenarioCreate, svc: Scenarios, repo: ScenarioRepo) -> dict[str, Any]:
+    out = svc.create(
+        name=body.name,
+        description=body.description,
+        horizon=body.horizon,
+        population_growth_pct=body.populationGrowthPct
+    )
+    scen_id = out["scenario_id"]
+    row = repo.get(scen_id)
+    return scenario_dto(row, []) if row else out
+
+
+@router.patch("/scenarios/{scenario_id}")
+def update_scenario(scenario_id: str, body: ScenarioUpdate, svc: Scenarios, repo: ScenarioRepo) -> dict[str, Any]:
+    sid = coerce_scenario_id(scenario_id)
+    if sid is None:
+        raise HTTPException(404, f"Scenario {scenario_id} not found")
+    kwargs = {}
+    if body.name is not None:
+        kwargs["name"] = body.name
+    if body.status is not None:
+        kwargs["status"] = body.status
+    if body.horizon is not None:
+        kwargs["horizon"] = body.horizon
+    if body.populationGrowthPct is not None:
+        kwargs["population_growth_pct"] = body.populationGrowthPct
+    if body.description is not None:
+        kwargs["description"] = body.description
+
+    out = svc.update(sid, **kwargs)
+    if out is None:
+        raise HTTPException(404, f"Scenario {scenario_id} not found")
+    return scenario_dto(out, repo.changes(sid))
 
 
 @router.post("/scenarios/{scenario_id}/changes", status_code=201)
-def add_change(scenario_id: int, body: ChangeCreate,
+def add_change(scenario_id: str, body: ChangeCreate,
                svc: Scenarios) -> dict[str, Any]:
-    return svc.add_change(scenario_id, body.type, body.operation,
-                          body.parameters, body.object_id)
+    sid = coerce_scenario_id(scenario_id)
+    if sid is None:
+        raise HTTPException(422, "Invalid scenario ID")
+    params = dict(body.parameters or {})
+    if body.label and "label" not in params:
+        params["label"] = body.label
+    return svc.add_change(sid, body.type, body.operation,
+                          params, body.object_id)
 
 
 @router.post("/scenarios/{scenario_id}/evaluate")

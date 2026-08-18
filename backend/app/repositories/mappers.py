@@ -18,6 +18,34 @@ from typing import Any, Iterable, Sequence
 
 from geoalchemy2.shape import to_shape
 from shapely.geometry import LineString, MultiLineString
+from shapely.wkt import loads as wkt_loads
+from shapely.wkb import loads as wkb_loads
+
+
+def safe_to_shape(geom: Any) -> Any:
+    if geom is None:
+        return None
+    if isinstance(geom, (str, bytes)):
+        if isinstance(geom, str):
+            if "SRID=" in geom or any(geom.startswith(k) for k in ("POINT", "LINESTRING", "POLYGON", "MULTI")):
+                s = geom.split(";", 1)[-1]
+                return wkt_loads(s)
+            try:
+                return wkb_loads(bytes.fromhex(geom))
+            except Exception:
+                return wkt_loads(geom)
+        return wkb_loads(geom)
+    if hasattr(geom, "data"):
+        data = geom.data
+        if isinstance(data, str):
+            if "SRID=" in data or any(data.startswith(k) for k in ("POINT", "LINESTRING", "POLYGON", "MULTI")):
+                return wkt_loads(data.split(";", 1)[-1])
+            try:
+                return wkb_loads(bytes.fromhex(data))
+            except Exception:
+                return wkt_loads(data)
+    return to_shape(geom)
+
 
 from ..core.config import get_settings
 from ..engines.contracts import (
@@ -45,7 +73,7 @@ def _f(v: Any) -> float | None:
 
 def _geom(row: Any, srid: int) -> Any:
     """WKBElement -> shapely, reprojected into the analysis CRS."""
-    return to_analysis(to_shape(row.geometry), srid)
+    return to_analysis(safe_to_shape(row.geometry), srid)
 
 
 def _first_line(geom: Any) -> Any:

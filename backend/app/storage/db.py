@@ -101,6 +101,16 @@ def check_connection() -> dict[str, object]:
                 "WHERE table_schema='public'"
             )).scalars().all()
             present = set(rows)
+            if "scenarios" in present:
+                try:
+                    conn.execute(text("""
+                        ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS horizon INTEGER DEFAULT 2035;
+                        ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS population_growth_pct NUMERIC(5,2) DEFAULT 2.5;
+                        ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'draft';
+                        COMMIT;
+                    """))
+                except Exception as e:
+                    log.warning("Could not auto-add scenario columns: %s", e)
             out["connected"] = True
             out["tables_present"] = len(present & set(expected))
             out["missing_tables"] = sorted(set(expected) - present)

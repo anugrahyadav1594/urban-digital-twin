@@ -106,27 +106,31 @@ class SpatialRepository:
                                mappers.to_facility, self.srid)
 
     def nearby_facilities(
-        self, lon: float, lat: float, radius_m: float,
+        self, lon: float, lat: float, radius_m: float = 5000.0,
         facility_type: str | None = None, limit: int = 10,
     ) -> list[dict[str, Any]]:
         """ST_DWithin on geography -> true metre radius, index-assisted."""
-        pt = func.ST_SetSRID(func.ST_MakePoint(lon, lat), STORAGE_SRID)
-        dist = func.ST_Distance(func.Geography(Facility.geometry),
-                                func.Geography(pt))
-        stmt = (
-            select(Facility, dist.label("distance_m"))
-            .where(func.ST_DWithin(func.Geography(Facility.geometry),
-                                   func.Geography(pt), radius_m))
-            .order_by(dist)
-            .limit(limit)
-        )
+        from sqlalchemy import text
+        sql = """
+            SELECT *, ST_Distance(ST_Transform(geometry, 3857), ST_Transform(ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 3857)) AS distance_m
+            FROM facilities
+            WHERE ST_DWithin(ST_Transform(geometry, 3857), ST_Transform(ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 3857), :radius_m)
+        """
+        params = {"lon": lon, "lat": lat, "radius_m": radius_m, "limit": limit}
         if facility_type:
-            stmt = stmt.where(Facility.type == facility_type)
+            sql += " AND type = :facility_type"
+            params["facility_type"] = facility_type
+        sql += " ORDER BY distance_m LIMIT :limit"
+
+        rows = self.s.execute(text(sql), params).all()
         out = []
-        for row, d in self.s.execute(stmt).all():
-            rec = row.as_dict()
-            rec["distance_m"] = round(float(d), 2)
-            out.append(rec)
+        for r in rows:
+            mapping = dict(r._mapping)
+            d = mapping.pop("distance_m", 0.0)
+            if "geometry" in mapping and hasattr(mapping["geometry"], "isoformat"):
+                del mapping["geometry"]
+            mapping["distance_m"] = round(float(d), 2)
+            out.append(mapping)
         return out
 
     # ---------------- population ----------------

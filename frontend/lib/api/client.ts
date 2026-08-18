@@ -1,16 +1,16 @@
 /**
  * Typed API client for FastAPI backend integration.
- * Every call attempts to reach the backend first, gracefully falling back to
- * deterministic in-memory execution when the backend is unreachable.
+ * Every call attempts to reach the backend first.
  */
 import { API_BASE } from "../constants";
 import { CITY, featureFromId } from "../city-model";
-import { SCENARIOS, runAccessibility, runRisk, runSuitability } from "../mock";
-import type { AnalysisResult, CityInfo, FeatureRecord, Scenario, SuitabilityRequest, Layer } from "@/types";
+import { SCENARIOS, runAccessibility, runEmergency, runRisk, runSuitability } from "../mock";
+import type { AnalysisResult, CityInfo, FeatureRecord, Scenario, SuitabilityRequest, Layer, Job } from "@/types";
+
+export const BACKEND_REQUIRED = process.env.NEXT_PUBLIC_BACKEND_REQUIRED !== "false";
 
 let backendUp: boolean | null = null;
 
-/** Subscribers notified whenever backend reachability changes. */
 type BackendListener = (up: boolean) => void;
 const listeners = new Set<BackendListener>();
 
@@ -25,11 +25,9 @@ function setBackendUp(up: boolean) {
   backendUp = up;
   if (changed) {
     if (!up) {
-      // A silent fallback to mock data is indistinguishable from real
-      // results. Make it loud in the console as well as the UI.
       console.error(
         "[NAGAR-X] Backend unreachable at " + API_BASE +
-        " - serving DEMO DATA. Results below are NOT from your database."
+        (BACKEND_REQUIRED ? " - BACKEND REQUIRED MODE ACTIVE." : " - serving DEMO DATA.")
       );
     } else {
       console.info("[NAGAR-X] Backend connected at " + API_BASE);
@@ -38,14 +36,6 @@ function setBackendUp(up: boolean) {
   }
 }
 
-/**
- * Timeouts, in ms.
- *
- * A single 2.5 s budget was applied to every call, but real MCDA / network
- * analysis over the live graph takes 10-25 s, so those requests were always
- * aborted and silently replaced by mock results. Reads stay snappy; heavy
- * POSTs get a realistic budget.
- */
 const T_PROBE = 3000;
 const T_READ = 20000;
 const T_ANALYSIS = 120000;
@@ -55,8 +45,6 @@ async function tryFetch<T>(
   init?: RequestInit,
   timeoutMs: number = T_READ
 ): Promise<T | null> {
-  // Previously a single failure latched backendUp=false forever, so the app
-  // stayed in demo mode even after the API came back. Always retry.
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -66,22 +54,29 @@ async function tryFetch<T>(
       headers: { "content-type": "application/json", ...(init?.headers || {}) }
     });
     clearTimeout(t);
-    if (!res.ok) throw new Error(String(res.status));
+    // Backend responded — it is up, even if status is 4xx/5xx
     setBackendUp(true);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as T;
-  } catch {
-    setBackendUp(false);
+  } catch (err: any) {
+    // Only mark backend down on network/timeout errors, not HTTP error responses
+    const msg = err?.message || "";
+    if (!msg.startsWith("HTTP ")) {
+      setBackendUp(false);
+    }
+    if (BACKEND_REQUIRED) {
+      console.warn(`[API Error] Request to ${path} failed:`, err);
+    }
     return null;
   }
 }
 
-/** Probe readiness directly; used by the status banner on mount. */
 export async function checkBackend(): Promise<boolean> {
   const r = await tryFetch<{ ready: boolean }>("/ready", undefined, T_PROBE);
   return r !== null;
 }
 
-export const isDemoMode = () => backendUp !== true;
+export const isDemoMode = () => backendUp !== true && !BACKEND_REQUIRED;
 
 export const api = {
   getCity: async (): Promise<CityInfo> => (await tryFetch<CityInfo>("/city")) ?? CITY,
@@ -89,24 +84,73 @@ export const api = {
   getFeature: async (id: string): Promise<FeatureRecord | null> =>
     (await tryFetch<FeatureRecord>("/features/" + id)) ?? featureFromId(id),
 
-  listScenarios: async (): Promise<Scenario[]> => (await tryFetch<Scenario[]>("/scenarios")) ?? SCENARIOS,
+  listScenarios: async (): Promise<Scenario[]> => {
+    const res = await tryFetch<Scenario[]>("/scenarios");
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to fetch scenarios from backend");
+    return SCENARIOS;
+  },
 
-  createScenario: async (name: string, horizon: number = 2035, populationGrowthPct: number = 2.5): Promise<any> =>
-    (await tryFetch("/scenarios", { method: "POST", body: JSON.stringify({ name, horizon, populationGrowthPct }) })) ?? { scenario_id: 1, name, status: "created" },
+  createScenario: async (name: string, horizon: number = 2035, populationGrowthPct: number = 2.5, description?: string): Promise<Scenario> => {
+    const res = await tryFetch<Scenario>("/scenarios", {
+      method: "POST",
+      body: JSON.stringify({ name, horizon, populationGrowthPct, description })
+    });
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to create scenario on backend");
+    return { id: `scn_${Date.now()}`, name, status: "draft", createdAt: new Date().toISOString(), horizon, populationGrowthPct, changes: [] };
+  },
 
-  addScenarioChange: async (scenarioId: string, change: any): Promise<any> =>
-    (await tryFetch(`/scenarios/${scenarioId}/changes`, { method: "POST", body: JSON.stringify(change) })) ?? { status: "logged" },
+  updateScenario: async (scenarioId: string, updates: Partial<Scenario>): Promise<Scenario> => {
+    const res = await tryFetch<Scenario>(`/scenarios/${scenarioId}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates)
+    });
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to update scenario on backend");
+    return { id: scenarioId, name: updates.name || "Scenario", status: updates.status || "draft", createdAt: "", horizon: updates.horizon || 2035, populationGrowthPct: updates.populationGrowthPct || 2.5, changes: [] };
+  },
+
+  addScenarioChange: async (scenarioId: string, change: { type: string; operation?: string; label?: string; parameters?: any; object_id?: number }): Promise<any> => {
+    const res = await tryFetch(`/scenarios/${scenarioId}/changes`, {
+      method: "POST",
+      body: JSON.stringify({
+        type: change.type,
+        operation: change.operation || "INSERT",
+        label: change.label,
+        parameters: change.parameters || {},
+        object_id: change.object_id
+      })
+    });
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to log scenario change on backend");
+    return { status: "logged" };
+  },
 
   evaluateScenario: async (scenarioId: string, facilityType: string = "hospital"): Promise<any> =>
     (await tryFetch(`/scenarios/${scenarioId}/evaluate?facility_type=${facilityType}`, { method: "POST" }, T_ANALYSIS)) ?? [],
 
-  compareScenarios: async (scenarioIds: string[], facilityType: string = "hospital"): Promise<any> =>
-    (await tryFetch("/scenarios/compare", { method: "POST", body: JSON.stringify({ scenario_ids: scenarioIds, facility_type: facilityType }) }, T_ANALYSIS)) ?? null,
+  compareScenarios: async (scenarioIds: string[], facilityType: string = "hospital"): Promise<any> => {
+    const res = await tryFetch("/scenarios/compare", {
+      method: "POST",
+      body: JSON.stringify({ scenario_ids: scenarioIds, facility_type: facilityType })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to run scenario comparison on backend");
+    return null;
+  },
 
-  suitability: async (req: SuitabilityRequest, scenario: Scenario): Promise<AnalysisResult> =>
-    (await tryFetch<AnalysisResult>("/planning/suitability", { method: "POST", body: JSON.stringify({ ...req, scenario_id: scenario.id }) }, T_ANALYSIS)) ??
-    runSuitability(req, scenario),
+  roadProposal: async (req: { geometry: any; road_type: string; lanes: number; speed: number; scenario_id?: string }): Promise<AnalysisResult> => {
+    const res = await tryFetch<AnalysisResult>("/planning/road", {
+      method: "POST",
+      body: JSON.stringify(req)
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to compute road proposal on backend");
+    throw new Error("Backend road analysis failed");
+  },
 
+<<<<<<< HEAD
   emergencyCatalogue: async (): Promise<any> =>
     (await tryFetch<any>("/emergency/catalogue")) ?? { hazards: [], measures: [] },
 
@@ -119,28 +163,134 @@ export const api = {
   accessibility: async (scenario: Scenario): Promise<AnalysisResult> =>
     (await tryFetch<AnalysisResult>("/analysis/accessibility", { method: "POST", body: JSON.stringify({ scenario_id: scenario.id }) }, T_ANALYSIS)) ??
     runAccessibility(scenario),
+=======
+  suitability: async (req: SuitabilityRequest, scenario: Scenario): Promise<AnalysisResult> => {
+    const res = await tryFetch<AnalysisResult>("/planning/suitability", {
+      method: "POST",
+      body: JSON.stringify({ ...req, scenario_id: scenario.id })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to compute site suitability on backend");
+    return runSuitability(req, scenario);
+  },
+>>>>>>> 57a663f36b368b058f1d6cbcbbc1de3a43e85b7d
 
-  emergency: async (scenario: Scenario): Promise<AnalysisResult> =>
-    (await tryFetch<AnalysisResult>("/analysis/emergency", { method: "POST", body: JSON.stringify({ scenario_id: scenario.id }) }, T_ANALYSIS)) ??
-    runAccessibility(scenario),
+  accessibility: async (scenario: Scenario): Promise<AnalysisResult> => {
+    const res = await tryFetch<AnalysisResult>("/analysis/accessibility", {
+      method: "POST",
+      body: JSON.stringify({ scenario_id: scenario.id })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to compute accessibility on backend");
+    return runAccessibility(scenario);
+  },
 
-  risk: async (scenario: Scenario): Promise<AnalysisResult> =>
-    (await tryFetch<AnalysisResult>("/analysis/risk", { method: "POST", body: JSON.stringify({ scenario_id: scenario.id }) }, T_ANALYSIS)) ??
-    runRisk(scenario),
+  emergency: async (scenario: Scenario): Promise<AnalysisResult> => {
+    const res = await tryFetch<AnalysisResult>("/analysis/emergency", {
+      method: "POST",
+      body: JSON.stringify({ scenario_id: scenario.id })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to compute emergency response coverage on backend");
+    return runEmergency(scenario);
+  },
 
+<<<<<<< HEAD
   simulationPopulation: async (baseYear: number = 2025, horizonYear: number = 2035, annualRate: number = 0.025): Promise<any> =>
     (await tryFetch("/simulation/population", { method: "POST", body: JSON.stringify({ base_year: baseYear, horizon_year: horizonYear, annual_rate: annualRate }) }, T_ANALYSIS)) ?? null,
+=======
+  risk: async (scenario: Scenario): Promise<AnalysisResult> => {
+    const res = await tryFetch<AnalysisResult>("/analysis/risk", {
+      method: "POST",
+      body: JSON.stringify({ scenario_id: scenario.id })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to compute network resilience on backend");
+    return runRisk(scenario);
+  },
 
-  simulationFlood: async (floodLevelM: number = 1.5, returnPeriodYears: number = 50): Promise<any> =>
-    (await tryFetch("/simulation/flood", { method: "POST", body: JSON.stringify({ flood_level_m: floodLevelM, return_period_years: returnPeriodYears }) }, T_ANALYSIS)) ?? null,
+  demand: async (scenario: Scenario): Promise<AnalysisResult> => {
+    const res = await tryFetch<AnalysisResult>("/analysis/demand", {
+      method: "POST",
+      body: JSON.stringify({ scenario_id: scenario.id })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to compute infrastructure demand on backend");
+    throw new Error("Backend demand analysis failed");
+  },
 
-  optimizeFacilities: async (facilityType: string = "hospital", objective: string = "p_median", numFacilities: number = 3): Promise<any> =>
-    (await tryFetch("/optimization/facility-location", { method: "POST", body: JSON.stringify({ facility_type: facilityType, objective, num_facilities: numFacilities }) }, T_ANALYSIS)) ?? null,
+  agentPlan: async (prompt: string): Promise<any> => {
+    const res = await tryFetch<any>("/agents/plan", {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to execute AI plan on backend");
+    return null;
+  },
 
-  /** Live layer inventory with real row counts from PostGIS. */
+  simulationPopulation: async (baseYear: number = 2025, horizonYear: number = 2035, annualRate: number = 0.025): Promise<any> => {
+    const res = await tryFetch("/simulation/population", {
+      method: "POST",
+      body: JSON.stringify({ base_year: baseYear, horizon_year: horizonYear, annual_rate: annualRate })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to run population simulation on backend");
+    return null;
+  },
+>>>>>>> 57a663f36b368b058f1d6cbcbbc1de3a43e85b7d
+
+  simulationFlood: async (floodLevelM: number = 1.5, returnPeriodYears: number = 50): Promise<any> => {
+    const res = await tryFetch("/simulation/flood", {
+      method: "POST",
+      body: JSON.stringify({ flood_level_m: floodLevelM, return_period_years: returnPeriodYears })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to run flood exposure simulation on backend");
+    return null;
+  },
+
+  optimizeFacilities: async (facilityType: string = "hospital", objective: string = "p_median", numFacilities: number = 3): Promise<any> => {
+    const res = await tryFetch("/optimization/facility-location", {
+      method: "POST",
+      body: JSON.stringify({ facility_type: facilityType, objective, num_facilities: numFacilities })
+    }, T_ANALYSIS);
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to run facility location optimization on backend");
+    return null;
+  },
+
+  createJob: async (title: string, kind: string, stages: any[]): Promise<Job> => {
+    const res = await tryFetch<Job>("/jobs", {
+      method: "POST",
+      body: JSON.stringify({ title, kind, stages })
+    });
+    if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to create job on backend");
+    return {
+      id: `job_${Date.now()}`,
+      title,
+      kind,
+      progress: 0,
+      state: "running",
+      stages: stages.map((s, i) => ({ ...s, state: i === 0 ? "running" : "pending" })),
+      startedAt: Date.now()
+    };
+  },
+
+  getJob: async (jobId: string): Promise<Job | null> => {
+    return await tryFetch<Job>(`/jobs/${jobId}`);
+  },
+
+  updateJob: async (jobId: string, update: { state?: string; progress?: number; error?: string; stages?: any[] }): Promise<Job | null> => {
+    return await tryFetch<Job>(`/jobs/${jobId}`, {
+      method: "PATCH",
+      body: JSON.stringify(update)
+    });
+  },
+
   listLayers: async (): Promise<Layer[] | null> => await tryFetch<Layer[]>("/layers"),
 
-  /** layerId may carry a query string, e.g. "buildings?limit=6000". */
   getLayerGeoJSON: async (layerId: string): Promise<any> => {
     const [id, qs] = layerId.split("?");
     return (await tryFetch(`/layers/${id}/geojson${qs ? "?" + qs : ""}`, undefined, 60000)) ?? null;

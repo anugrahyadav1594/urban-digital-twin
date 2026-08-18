@@ -47,6 +47,28 @@ class SuitabilityRequest(BaseModel):
         False, description="treat maxTravelMin as a hard rule, not just a weight")
 
 
+class RoadRequest(BaseModel):
+    geometry: dict[str, Any] = Field(..., description="GeoJSON LineString geometry")
+    road_type: str = Field("Arterial")
+    lanes: int = Field(4, ge=1, le=10)
+    speed: float = Field(50.0, gt=0)
+    scenario_id: str | int | None = None
+
+
+@router.post("/road")
+def analyze_road(req: RoadRequest, svc: Planning) -> dict[str, Any]:
+    if not req.geometry or req.geometry.get("type") not in ("LineString", "MultiLineString"):
+        raise HTTPException(422, "road geometry must be a GeoJSON LineString")
+    sid = coerce_scenario_id(req.scenario_id)
+    return svc.analyze_road(
+        geometry=req.geometry,
+        road_type=req.road_type,
+        lanes=req.lanes,
+        speed=req.speed,
+        scenario_id=sid
+    )
+
+
 @router.post("/suitability")
 def suitability(req: SuitabilityRequest, svc: Planning,
                 s: DbSession) -> dict[str, Any]:
