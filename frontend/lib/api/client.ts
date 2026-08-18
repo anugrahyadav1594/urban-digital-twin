@@ -107,6 +107,15 @@ export const api = {
     (await tryFetch<AnalysisResult>("/planning/suitability", { method: "POST", body: JSON.stringify({ ...req, scenario_id: scenario.id }) }, T_ANALYSIS)) ??
     runSuitability(req, scenario),
 
+  emergencyCatalogue: async (): Promise<any> =>
+    (await tryFetch<any>("/emergency/catalogue")) ?? { hazards: [], measures: [] },
+
+  emergencyRoute: async (body: any): Promise<any> =>
+    await tryFetch<any>("/emergency/route", { method: "POST", body: JSON.stringify(body) }, T_ANALYSIS),
+
+  simulateDisaster: async (body: any): Promise<any> =>
+    await tryFetch<any>("/emergency/simulate", { method: "POST", body: JSON.stringify(body) }, T_ANALYSIS),
+
   accessibility: async (scenario: Scenario): Promise<AnalysisResult> =>
     (await tryFetch<AnalysisResult>("/analysis/accessibility", { method: "POST", body: JSON.stringify({ scenario_id: scenario.id }) }, T_ANALYSIS)) ??
     runAccessibility(scenario),
@@ -118,12 +127,6 @@ export const api = {
   risk: async (scenario: Scenario): Promise<AnalysisResult> =>
     (await tryFetch<AnalysisResult>("/analysis/risk", { method: "POST", body: JSON.stringify({ scenario_id: scenario.id }) }, T_ANALYSIS)) ??
     runRisk(scenario),
-
-  agentPlan: async (prompt: string): Promise<any> =>
-    await tryFetch<any>("/agents/plan", {
-      method: "POST",
-      body: JSON.stringify({ prompt }),
-    }),
 
   simulationPopulation: async (baseYear: number = 2025, horizonYear: number = 2035, annualRate: number = 0.025): Promise<any> =>
     (await tryFetch("/simulation/population", { method: "POST", body: JSON.stringify({ base_year: baseYear, horizon_year: horizonYear, annual_rate: annualRate }) }, T_ANALYSIS)) ?? null,

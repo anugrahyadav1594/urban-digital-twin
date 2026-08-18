@@ -29,6 +29,27 @@ export type BridgeImpl = {
   rotateGlobe: (dir: "up" | "down" | "left" | "right" | "rollLeft" | "rollRight") => void;
   toggleAutoRotate: () => void;
   toggleHighways: (show?: boolean) => void;
+  showEmergencyRoutes: (routes: EmergencyRoute[]) => void;
+  showHazard: (hazard: HazardFootprint | null) => void;
+  clearEmergency: () => void;
+};
+
+/** A responder route drawn on the map: lon/lat path plus display metadata. */
+export type EmergencyRoute = {
+  stationId: string;
+  stationName: string;
+  path: [number, number][] | number[][];
+  responseTimeMin: number;
+  isPrimary?: boolean;
+  withinTarget?: boolean;
+};
+
+/** Hazard extent as GeoJSON-ish rings in lon/lat. */
+export type HazardFootprint = {
+  center: [number, number] | number[];
+  footprint?: { type: string; coordinates: number[][][] } | null;
+  footprintMitigated?: { type: string; coordinates: number[][][] } | null;
+  label?: string;
 };
 
 const noop = () => {};
@@ -57,5 +78,8 @@ export const mapBridge = {
   clearProposals: () => (impl.clearProposals ?? noop)(),
   rotateGlobe: (dir: "up" | "down" | "left" | "right" | "rollLeft" | "rollRight") => (impl.rotateGlobe ?? noop)(dir),
   toggleAutoRotate: () => (impl.toggleAutoRotate ?? noop)(),
-  toggleHighways: (show?: boolean) => (impl.toggleHighways ?? noop)(show)
+  toggleHighways: (show?: boolean) => (impl.toggleHighways ?? noop)(show),
+  showEmergencyRoutes: (r: EmergencyRoute[]) => (impl.showEmergencyRoutes ?? noop)(r),
+  showHazard: (h: HazardFootprint | null) => (impl.showHazard ?? noop)(h),
+  clearEmergency: () => (impl.clearEmergency ?? noop)()
 };

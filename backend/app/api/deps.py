@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..core.config import Settings, get_settings
 from ..repositories import ResultsRepository, ScenarioRepository, SpatialRepository
-from ..services import AnalysisService, PlanningService, ScenarioService
+from ..services import (AnalysisService, EmergencyService, PlanningService,
+                        ScenarioService)
 from ..storage.db import get_db
 
 
@@ -25,3 +26,4 @@ ScenarioRepo = Annotated[ScenarioRepository, Depends(lambda s=Depends(db_session
 Planning = Annotated[PlanningService, Depends(lambda s=Depends(db_session): PlanningService(s))]
 Analysis = Annotated[AnalysisService, Depends(lambda s=Depends(db_session): AnalysisService(s))]
 Scenarios = Annotated[ScenarioService, Depends(lambda s=Depends(db_session): ScenarioService(s))]
+Emergency = Annotated[EmergencyService, Depends(lambda s=Depends(db_session): EmergencyService(s))]

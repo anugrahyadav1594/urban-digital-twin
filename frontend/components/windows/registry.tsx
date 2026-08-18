@@ -10,6 +10,7 @@ import PlanningPanel from "@/components/panels/PlanningPanel";
 import AnalysisPanel from "@/components/panels/AnalysisPanel";
 import ResultsPanel from "@/components/panels/ResultsPanel";
 import SimulationPanel from "@/components/panels/SimulationPanel";
+import EmergencyPanel from "@/components/panels/EmergencyPanel";
 import JobMonitorPanel from "@/components/panels/JobMonitorPanel";
 import ComparisonPanel from "@/components/panels/ComparisonPanel";
 import AIPanel from "@/components/panels/AIPanel";
@@ -26,6 +27,7 @@ export const WINDOW_CONTENT: Record<WindowId, React.ComponentType> = {
   analysis: AnalysisPanel,
   results: ResultsPanel,
   simulation: SimulationPanel,
+  emergency: EmergencyPanel,
   jobs: JobMonitorPanel,
   comparison: ComparisonPanel,
   ai: AIPanel,
