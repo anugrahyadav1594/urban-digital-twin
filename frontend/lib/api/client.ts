@@ -246,6 +246,7 @@ export const api = {
       body: JSON.stringify({ title, kind, stages })
     });
     if (res) return res;
+    if (BACKEND_REQUIRED) throw new Error("Failed to create job on backend");
     return {
       id: `job_${Date.now()}`,
       title,

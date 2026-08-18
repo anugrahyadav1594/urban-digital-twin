@@ -32,16 +32,23 @@ export default function SimulationPanel() {
     return () => clearInterval(t);
   }, [playing]);
 
+  const [error, setError] = useState<string | null>(null);
+
   const runPopulationSim = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await api.simulationPopulation(2025, year, popRate);
       if (res) {
         setSimResult(res);
         addResult(res);
+      } else {
+        throw new Error("Population simulation returned no data from backend.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Population simulation error:", err);
+      setError(err?.message || "Population simulation failed on backend.");
+      setSimResult(null);
     } finally {
       setLoading(false);
     }
@@ -49,14 +56,19 @@ export default function SimulationPanel() {
 
   const runFloodSim = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await api.simulationFlood(floodLevel, returnPeriod);
       if (res) {
         setSimResult(res);
         addResult(res);
+      } else {
+        throw new Error("Flood exposure simulation returned no data from backend.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Flood simulation error:", err);
+      setError(err?.message || "Flood exposure simulation failed on backend.");
+      setSimResult(null);
     } finally {
       setLoading(false);
     }
@@ -113,7 +125,13 @@ export default function SimulationPanel() {
         </>
       )}
 
-      {simResult && (
+      {error && (
+        <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 6, fontSize: 12, color: "var(--warn)" }}>
+          Simulation Error: {error}
+        </div>
+      )}
+
+      {simResult && !loading && (
         <div style={{ marginTop: 12 }}>
           <SectionTitle>{simResult.title}</SectionTitle>
           <MetricCards metrics={simResult.metrics} />

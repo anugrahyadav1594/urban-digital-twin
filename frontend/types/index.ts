@@ -96,6 +96,7 @@ export type Job = {
   stages: JobStage[];
   startedAt: number;
   resultId?: string;
+  error?: string;
 };
 
 export type AgentStep = {

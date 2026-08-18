@@ -1,6 +1,6 @@
 "use client";
 import { create } from "zustand";
-import { api } from "@/lib/api/client";
+import { api, BACKEND_REQUIRED } from "@/lib/api/client";
 import type { Job, JobStage } from "@/types";
 
 type Store = {
@@ -16,7 +16,23 @@ export const useJobStore = create<Store>((set, get) => ({
     let isLocalOnly = false;
     try {
       backendJob = await api.createJob(title, kind, stages);
-    } catch {
+    } catch (err: any) {
+      if (BACKEND_REQUIRED) {
+        // LIVE mode: do NOT create a fake job. Show the failure in the monitor.
+        const errorJob: Job = {
+          id: `job_err_${Date.now()}`,
+          title,
+          kind,
+          progress: 0,
+          state: "failed",
+          stages: stages.map((s) => ({ ...s, state: "pending" as const })),
+          startedAt: Date.now(),
+          error: err.message || "Backend job creation failed"
+        };
+        set((s) => ({ jobs: [errorJob, ...s.jobs].slice(0, 12) }));
+        return errorJob.id;
+      }
+      // DEMO mode: local-only fallback
       isLocalOnly = true;
       backendJob = {
         id: `job_${Date.now()}`,
@@ -65,8 +81,8 @@ export const useJobStore = create<Store>((set, get) => ({
             stages: stages.map((s) => ({ ...s, state: "done" as const }))
           });
           // Polling will pick up the terminal state; give it one cycle
-        } else {
-          // Local-only fallback: no backend to poll
+        } else if (isLocalOnly) {
+          // Local-only fallback (DEMO mode): no backend to poll
           finished = true;
           set((s) => ({
             jobs: s.jobs.map((j) => (j.id === jobId ? {

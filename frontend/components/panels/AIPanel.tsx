@@ -71,6 +71,9 @@ export default function AIPanel() {
       }
     } catch (e: any) {
       console.warn("Backend AI service error:", e);
+      push({ role: "assistant", text: `AI Planning error: ${e.message || "Failed to execute AI plan on backend."}` });
+      setThinking(false);
+      return;
     }
 
     // Fallback deterministic suitability analysis using live backend
