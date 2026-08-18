@@ -110,4 +110,12 @@ export type SuitabilityRequest = {
   maxTravelMin: number;
   floodRule: "Exclude High" | "Exclude High + Medium" | "Allow all";
   weights: Record<string, number>;
+  // Advanced planner controls. The backend supported these all along; the
+  // API simply never exposed them.
+  maxSlope?: number | null;
+  allowedZoning?: string[];
+  minDistanceSameType?: number | null;
+  serviceRadius?: number;
+  useNetwork?: boolean;
+  enforceMaxTravel?: boolean;
 };

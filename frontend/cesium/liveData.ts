@@ -47,11 +47,16 @@ function flatten(ring: number[][]): number[] {
   return out;
 }
 
-/** Yield every polygon (outer ring only) from Polygon | MultiPolygon. */
-function* polygons(geom: any): Generator<number[][]> {
+/**
+ * Yield every polygon from Polygon | MultiPolygon as [outerRing, ...holes].
+ *
+ * The previous version yielded `coordinates[0]` only, discarding interior
+ * rings, so courtyard buildings rendered as filled blocks.
+ */
+function* polygons(geom: any): Generator<number[][][]> {
   if (!geom) return;
-  if (geom.type === "Polygon") yield geom.coordinates[0];
-  else if (geom.type === "MultiPolygon") for (const p of geom.coordinates) yield p[0];
+  if (geom.type === "Polygon") yield geom.coordinates;
+  else if (geom.type === "MultiPolygon") for (const p of geom.coordinates) yield p;
 }
 
 /** Yield every line from LineString | MultiLineString. */
@@ -82,19 +87,47 @@ export async function loadBuildings(C: Cesium, ds: any, limit = MAX_BUILDINGS): 
     // Thresholds match the real height distribution of this city (median
     // ~10 m). The old >32/>16 bands put 98% of buildings in one colour.
     const col = h > 13 ? COLORS.buildingHigh : h > 6 ? COLORS.buildingMid : COLORS.buildingLow;
-    for (const ring of polygons(f.geometry)) {
-      if (ring.length < 4) continue;
+    for (const rings of polygons(f.geometry)) {
+      const outer = rings[0];
+      if (!outer || outer.length < 4) continue;
+      // Interior rings become holes so courtyards read as courtyards.
+      const holes = rings.slice(1)
+        .filter((r) => r && r.length >= 4)
+        .map((r) => new C.PolygonHierarchy(C.Cartesian3.fromDegreesArray(flatten(r))));
+      const hierarchy = new C.PolygonHierarchy(
+        C.Cartesian3.fromDegreesArray(flatten(outer)),
+        holes
+      );
+      // Deterministic per-building shade: identical colours across a dense
+      // block flatten into one mass with no readable edges. Cesium's
+      // brighten() rejects negative magnitudes, so darken() handles the
+      // other half of the range.
+      const shade = (((Number(p.id) || 0) % 13) - 6) / 100;   // -0.06 .. +0.06
       ds.entities.add({
         id: `building:${p.id}:${n}`,
         polygon: {
-          hierarchy: C.Cartesian3.fromDegreesArray(flatten(ring)),
-          material: C.Color.fromCssColorString(col).withAlpha(0.95),
+          hierarchy,
+          // Opaque. withAlpha(0.95) forced Cesium's translucent pass, which
+          // both looked glassy and disabled depth-correct occlusion.
+          material: shade >= 0
+            ? C.Color.fromCssColorString(col).brighten(shade, new C.Color())
+            : C.Color.fromCssColorString(col).darken(-shade, new C.Color()),
           extrudedHeight: h,
           height: 0,
+          closeTop: true,
+          closeBottom: true,
+          perPositionHeight: false,
+          shadows: C.ShadowMode.ENABLED,
           outline: true,
-          outlineColor: C.Color.fromCssColorString("#0b1220").withAlpha(0.6)
+          outlineColor: C.Color.fromCssColorString("#0b1220").withAlpha(0.85),
+          outlineWidth: 1.0
         },
-        properties: { kind: "building", ref: String(p.id), height: h, floors }
+        properties: {
+          kind: "building", ref: String(p.id), height: h, floors,
+          buildingType: p.building_type ?? null,
+          landUse: p.land_use ?? null,
+          population: p.population_estimate ?? null
+        }
       });
       n++;
     }
@@ -184,8 +217,9 @@ export async function loadWater(C: Cesium, ds: any): Promise<number> {
   let n = 0;
   for (const f of gj.features) {
     const p = f.properties ?? {};
-    for (const ring of polygons(f.geometry)) {
-      if (ring.length < 4) continue;
+    for (const rings of polygons(f.geometry)) {
+      const ring = rings[0];
+      if (!ring || ring.length < 4) continue;
       ds.entities.add({
         id: `water:${p.id}:${n}`,
         polygon: {
@@ -209,8 +243,9 @@ export async function loadParcels(C: Cesium, dsParcels: any, dsFlood: any): Prom
   for (const f of gj.features) {
     const p = f.properties ?? {};
     const risk = num(p.flood_risk, 0);
-    for (const ring of polygons(f.geometry)) {
-      if (ring.length < 4) continue;
+    for (const rings of polygons(f.geometry)) {
+      const ring = rings[0];
+      if (!ring || ring.length < 4) continue;
       const pos = C.Cartesian3.fromDegreesArray(flatten(ring));
       dsParcels.entities.add({
         id: `parcel:${p.id}:${n}`,
@@ -221,7 +256,7 @@ export async function loadParcels(C: Cesium, dsParcels: any, dsFlood: any): Prom
           outlineColor: C.Color.fromCssColorString("#22d3ee").withAlpha(0.7),
           height: 3
         },
-        properties: { kind: "parcel", ref: String(p.id), zoning: p.zoning, floodRisk: risk }
+        properies: { kind: "parcel", ref: String(p.id), zoning: p.zoning, floodRisk: risk }
       });
       if (risk >= 0.3) {
         dsFlood.entities.add({

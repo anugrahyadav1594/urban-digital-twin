@@ -25,8 +25,11 @@ export default function PlanningPanel() {
   const [tab, setTab] = useState<"suitability" | "road">("suitability");
   const [req, setReq] = useState<SuitabilityRequest>({
     facility: "Hospital", capacity: 250, minArea: 4000, maxTravelMin: 15,
-    floodRule: "Exclude High", weights: { ...DEFAULT_WEIGHTS }
+    floodRule: "Exclude High", weights: { ...DEFAULT_WEIGHTS },
+    maxSlope: 15, allowedZoning: [], minDistanceSameType: null,
+    serviceRadius: 2000, useNetwork: true, enforceMaxTravel: false
   });
+  const [advanced, setAdvanced] = useState(false);
   const [road, setRoad] = useState({ type: "Arterial", lanes: 4, speed: 50 });
 
   const { drawMode, setDrawMode, drawnPath } = useMapStore();
@@ -100,10 +103,66 @@ export default function PlanningPanel() {
           ))}
           <div className="row" style={{ margin: "6px 0 12px" }}>
             <span className="muted" style={{ fontSize: 11 }}>Total</span>
-            <span className="mono" style={{ color: Object.values(req.weights).reduce((a, b) => a + b, 0) === 100 ? "var(--good)" : "var(--warn)" }}>
-              {Object.values(req.weights).reduce((a, b) => a + b, 0)}%
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 10 }}
+                title="Rescale all weights so they sum to 100"
+                onClick={() => {
+                  const t = Object.values(req.weights).reduce((a, b) => a + b, 0);
+                  if (!t) return;
+                  const w: Record<string, number> = {};
+                  for (const k of Object.keys(req.weights)) w[k] = Math.round((req.weights[k] / t) * 100);
+                  setReq({ ...req, weights: w });
+                }}>NORMALIZE</button>
+              <span className="mono" style={{ color: Object.values(req.weights).reduce((a, b) => a + b, 0) === 100 ? "var(--good)" : "var(--warn)" }}>
+                {Object.values(req.weights).reduce((a, b) => a + b, 0)}%
+              </span>
             </span>
           </div>
+          <div className="muted" style={{ fontSize: 10, marginTop: -6, marginBottom: 10 }}>
+            Relative weights — the engine normalizes them, so they need not sum to 100.
+          </div>
+
+          <SectionTitle>
+            <span style={{ cursor: "pointer" }} onClick={() => setAdvanced(!advanced)}>
+              {advanced ? "\u25be" : "\u25b8"} Site rules (advanced)
+            </span>
+          </SectionTitle>
+          {advanced && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Field label="Max slope (deg)">
+                  <input className="input" type="number" step={1} min={0} max={90}
+                    value={req.maxSlope ?? ""} placeholder="any"
+                    onChange={(e) => setReq({ ...req, maxSlope: e.target.value === "" ? null : Number(e.target.value) })} />
+                </Field>
+                <Field label="Catchment radius (m)">
+                  <input className="input" type="number" step={250} min={100}
+                    value={req.serviceRadius ?? 2000}
+                    onChange={(e) => setReq({ ...req, serviceRadius: Number(e.target.value) })} />
+                </Field>
+              </div>
+              <Field label="Min distance to same facility type (m)">
+                <input className="input" type="number" step={250} min={0}
+                  value={req.minDistanceSameType ?? ""} placeholder="no minimum"
+                  onChange={(e) => setReq({ ...req, minDistanceSameType: e.target.value === "" ? null : Number(e.target.value) })} />
+              </Field>
+              <Field label="Allowed zoning (comma separated, blank = any)">
+                <input className="input" type="text" placeholder="R1, C1, PS"
+                  value={(req.allowedZoning ?? []).join(", ")}
+                  onChange={(e) => setReq({ ...req, allowedZoning: e.target.value.split(",").map((z) => z.trim()).filter(Boolean) })} />
+              </Field>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, marginBottom: 5 }}>
+                <input type="checkbox" checked={req.enforceMaxTravel ?? false}
+                  onChange={(e) => setReq({ ...req, enforceMaxTravel: e.target.checked })} />
+                Reject sites over the max travel time (hard rule)
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5 }}>
+                <input type="checkbox" checked={req.useNetwork ?? true}
+                  onChange={(e) => setReq({ ...req, useNetwork: e.target.checked })} />
+                Route on the road network (off = straight-line distance)
+              </label>
+            </div>
+          )}
 
           <button className="btn primary wide" disabled={busy} onClick={findSites}>{busy ? "RUNNING…" : "FIND SITES"}</button>
           <div className="muted" style={{ fontSize: 10.5, marginTop: 6, textAlign: "center" }}>

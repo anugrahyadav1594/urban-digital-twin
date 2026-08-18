@@ -86,6 +86,26 @@ def site_suitability(
         graph=graph,
     )
 
+    # Max travel time is a HARD service-standard rule ("every resident within
+    # 15 minutes"). It was declared on SiteRequirements but never enforced, so
+    # the planner's limit had no effect on results.
+    if requirements.max_travel_time is not None:
+        keep = []
+        for c in candidates:
+            t = c.metrics.get("travel_time_mean")
+            if t is not None and t > requirements.max_travel_time:
+                rejected.append({
+                    "entity_id": c.parcel_id, "passed": False,
+                    "constraints_failed": [{
+                        "rule": "max_travel_time",
+                        "threshold": requirements.max_travel_time,
+                        "observed": t, "severity": "hard",
+                    }],
+                })
+            else:
+                keep.append(c)
+        candidates = keep
+
     if requirements.min_distance_same_type is not None:
         keep = []
         for c in candidates:

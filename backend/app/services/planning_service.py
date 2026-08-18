@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from ..core.config import get_settings
 from ..engines.contracts import Provenance
 from ..engines.network import build_graph
+from ..engines.planning.profile_builder import build_profile
 from ..engines.planning import DEFAULT_PROFILES, SiteRequirements, site_suitability
 from ..repositories import ResultsRepository, SpatialRepository
 
@@ -41,6 +42,9 @@ class PlanningService:
         scenario_id: int | None = None,
         use_network: bool = True,
         persist: bool = True,
+        weights: dict[str, float] | None = None,
+        max_travel_time: float | None = None,
+        capacity: float | None = None,
     ) -> dict[str, Any]:
         """Rank candidate parcels for a new facility, backed by live PostGIS."""
         parcels = self.repo.parcels(bbox=bbox)
@@ -54,7 +58,9 @@ class PlanningService:
             if roads:
                 graph = build_graph(roads, mode="car")
 
-        profile = DEFAULT_PROFILES.get(facility_type, DEFAULT_PROFILES["hospital"])
+        # Planner-supplied slider weights outrank the built-in profile. Without
+        # this the weights were accepted by the API and silently discarded.
+        profile, profile_warnings = build_profile(weights, facility_type)
 
         req = SiteRequirements(
             facility_type=facility_type,
@@ -64,6 +70,8 @@ class PlanningService:
             allowed_zoning=tuple(allowed_zoning or ()),
             allowed_status=(),          # NAGAR-X marks parcels 'candidate'
             min_distance_same_type=min_distance_same_type,
+            max_travel_time=max_travel_time,
+            capacity=capacity,
             scoring_profile=profile.name,
         )
 
@@ -83,6 +91,10 @@ class PlanningService:
                 "min_distance_same_type": min_distance_same_type,
                 "service_radius": service_radius,
                 "top_n": top_n,
+                "max_travel_time": max_travel_time,
+                "capacity": capacity,
+                "weights": dict(weights) if weights else None,
+                "scoring_profile": profile.name,
                 "bbox": list(bbox) if bbox else None,
                 "network_routing": bool(graph is not None),
             },
@@ -106,6 +118,8 @@ class PlanningService:
         )
 
         payload = result.to_dict()
+        if profile_warnings:
+            payload.setdefault("warnings", []).extend(profile_warnings)
         if persist:
             payload["result_id"] = self.results.save(result, scenario_id)
             self.s.commit()

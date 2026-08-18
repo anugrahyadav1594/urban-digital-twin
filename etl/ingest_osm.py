@@ -304,12 +304,16 @@ def ingest_buildings(poly, engine, rep: Report, dry: bool) -> None:
 
     heights: list[float] = []
     floors_list: list[int] = []
+    # Confidence records HOW the height was obtained, so a surveyed value is
+    # never presented with the same authority as a modelled one.
+    conf_list: list[float] = []
     for i, area in enumerate(area_m2.values):
         idx = osmid_col[i]
         h = _tag_num(_first(height_col[i], None))
         if h is not None and 1.5 <= h <= 999.0:
             heights.append(round(h, 2))
             floors_list.append(max(1, int(round(h / FLOOR_HEIGHT_M))))
+            conf_list.append(0.95)          # surveyed height tag
             continue
 
         lv = _tag_num(_first(levels_col[i], None))
@@ -319,6 +323,7 @@ def ingest_buildings(poly, engine, rep: Report, dry: bool) -> None:
             heights.append(round(min((fl + min(roof, 3.0)) * FLOOR_HEIGHT_M,
                                      999.0), 2))
             floors_list.append(fl)
+            conf_list.append(0.85)          # tagged storey count
             continue
 
         btype = str(_first(type_col[i], "yes")).lower()
@@ -335,6 +340,7 @@ def ingest_buildings(poly, engine, rep: Report, dry: bool) -> None:
         fl = max(1, min(int(round(base * _jitter(idx, 0.75, 1.35))), 40))
         heights.append(round(fl * FLOOR_HEIGHT_M, 2))
         floors_list.append(fl)
+        conf_list.append(0.35)              # modelled from type + footprint
 
     floors = pd.Series(floors_list, index=gdf.index)
     height_m = pd.Series(heights, index=gdf.index)
@@ -346,7 +352,7 @@ def ingest_buildings(poly, engine, rep: Report, dry: bool) -> None:
         "building_type": gdf.get("building", "yes").apply(
             lambda v: str(_first(v, "yes"))),
         "land_use": "mixed",
-        "confidence": 0.9,
+        "confidence": pd.Series(conf_list, index=gdf.index).values,
         # ~20 m2 of floor space per person, capped to stay plausible.
         "population_estimate": ((area_m2 * floors) / 20.0
                                 ).clip(0, 5000).round().astype(int).values,
