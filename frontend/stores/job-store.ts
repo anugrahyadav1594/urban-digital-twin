@@ -13,9 +13,11 @@ export const useJobStore = create<Store>((set, get) => ({
   jobs: [],
   startJob: async (title, kind, stages, taskFn) => {
     let backendJob: Job;
+    let isLocalOnly = false;
     try {
       backendJob = await api.createJob(title, kind, stages);
     } catch {
+      isLocalOnly = true;
       backendJob = {
         id: `job_${Date.now()}`,
         title,
@@ -32,7 +34,8 @@ export const useJobStore = create<Store>((set, get) => ({
     const jobId = backendJob.id;
     let finished = false;
 
-    const pollInterval = setInterval(async () => {
+    // Poll backend for authoritative job state (only for backend-managed jobs)
+    const pollInterval = !isLocalOnly ? setInterval(async () => {
       if (finished) return;
       try {
         const latest = await api.getJob(jobId);
@@ -42,32 +45,49 @@ export const useJobStore = create<Store>((set, get) => ({
           }));
           if (latest.state === "succeeded" || latest.state === "failed") {
             finished = true;
-            clearInterval(pollInterval);
+            clearInterval(pollInterval!);
           }
         }
       } catch (err: any) {
-        // HTTP 404 or backend failure
         console.warn(`Job ${jobId} status poll notice:`, err?.message);
       }
-    }, 800);
+    }, 800) : null;
 
     // Execute real work asynchronously
     (async () => {
       try {
         await taskFn();
-        finished = true;
-        clearInterval(pollInterval);
-        set((s) => ({
-          jobs: s.jobs.map((j) => (j.id === jobId ? {
-            ...j,
+        // Signal the backend that the task completed
+        if (!isLocalOnly && !finished) {
+          await api.updateJob(jobId, {
             state: "succeeded",
             progress: 100,
-            stages: j.stages.map((x) => ({ ...x, state: "done" as const }))
-          } : j))
-        }));
+            stages: stages.map((s) => ({ ...s, state: "done" as const }))
+          });
+          // Polling will pick up the terminal state; give it one cycle
+        } else {
+          // Local-only fallback: no backend to poll
+          finished = true;
+          set((s) => ({
+            jobs: s.jobs.map((j) => (j.id === jobId ? {
+              ...j,
+              state: "succeeded",
+              progress: 100,
+              stages: j.stages.map((x) => ({ ...x, state: "done" as const }))
+            } : j))
+          }));
+        }
       } catch (err: any) {
+        // Signal the backend that the task failed
+        if (!isLocalOnly && !finished) {
+          await api.updateJob(jobId, {
+            state: "failed",
+            error: err.message || "Job execution failed"
+          }).catch(() => {});
+        }
+        // Always update local state for failures (user needs immediate feedback)
         finished = true;
-        clearInterval(pollInterval);
+        if (pollInterval) clearInterval(pollInterval);
         set((s) => ({
           jobs: s.jobs.map((j) => (j.id === jobId ? {
             ...j,
@@ -82,3 +102,4 @@ export const useJobStore = create<Store>((set, get) => ({
   },
   clearDone: () => set((s) => ({ jobs: s.jobs.filter((j) => j.state === "running" || j.state === "queued") }))
 }));
+

@@ -54,11 +54,16 @@ async function tryFetch<T>(
       headers: { "content-type": "application/json", ...(init?.headers || {}) }
     });
     clearTimeout(t);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Backend responded — it is up, even if status is 4xx/5xx
     setBackendUp(true);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as T;
-  } catch (err) {
-    setBackendUp(false);
+  } catch (err: any) {
+    // Only mark backend down on network/timeout errors, not HTTP error responses
+    const msg = err?.message || "";
+    if (!msg.startsWith("HTTP ")) {
+      setBackendUp(false);
+    }
     if (BACKEND_REQUIRED) {
       console.warn(`[API Error] Request to ${path} failed:`, err);
     }
@@ -254,6 +259,13 @@ export const api = {
 
   getJob: async (jobId: string): Promise<Job | null> => {
     return await tryFetch<Job>(`/jobs/${jobId}`);
+  },
+
+  updateJob: async (jobId: string, update: { state?: string; progress?: number; error?: string; stages?: any[] }): Promise<Job | null> => {
+    return await tryFetch<Job>(`/jobs/${jobId}`, {
+      method: "PATCH",
+      body: JSON.stringify(update)
+    });
   },
 
   listLayers: async (): Promise<Layer[] | null> => await tryFetch<Layer[]>("/layers"),
