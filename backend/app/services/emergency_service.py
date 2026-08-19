@@ -238,6 +238,9 @@ class EmergencyService:
         return {
             "blocked_count": len(b_block),
             "slowed_count": len(b_slow),
+            # Raw ids so the route tab can re-run under exactly these conditions.
+            "blocked_ids": list(b_block),
+            "slowed_ids": list(b_slow),
             # Roads a mitigation measure reopens - the visible payoff of
             # road_redundancy.
             "reopened_count": len([i for i in b_block if i not in m_set]),
@@ -306,11 +309,15 @@ class EmergencyService:
 
         return {
             "responder_type": responder_type,
+            "stations_evaluated": len(stations),
             "roads_blocked_baseline": len(b_block),
             "roads_blocked_mitigated": len(m_block),
             "normal": first(normal),
             "during_event": first(during),
             "with_measures": first(with_m),
+            # Warnings explain a null above (cut off, staged, outside target).
+            "warnings": sorted({w for r in (normal, during, with_m)
+                                for w in r.warnings}),
             "impact": delta.to_dict(),
         }
 
