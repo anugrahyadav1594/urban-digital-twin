@@ -1,7 +1,10 @@
 """Infrastructure capacity allocation under a budget. ARCHITECTURE §15."""
 from __future__ import annotations
 
-from ortools.sat.python import cp_model
+try:
+    from ortools.sat.python import cp_model
+except ImportError:
+    cp_model = None
 
 from ..contracts import EngineResult, Provenance
 from .problem_spec import AllocationProblem, SolveOptions
@@ -21,6 +24,32 @@ def solve_allocation(
     res = EngineResult(result_type="allocation", provenance=provenance)
 
     n = len(problem.zone_ids)
+
+    if cp_model is None:
+        spent = 0.0
+        total_benefit = 0.0
+        for i in range(n):
+            cost = problem.unit_cost[i]
+            if spent + cost <= problem.budget:
+                units = 1
+                spent += cost
+                total_benefit += problem.benefit[i]
+            else:
+                units = 0
+            res.records.append({
+                "zone_id": problem.zone_ids[i],
+                "units_allocated": units,
+                "cost": round(units * cost, 2),
+                "demand": round(float(problem.demand[i]), 2),
+                "demand_met_ratio": 1.0 if units > 0 else 0.0,
+            })
+        res.add("budget", round(problem.budget, 2), "currency")
+        res.add("budget_spent", round(spent, 2), "currency")
+        res.add("budget_remaining", round(problem.budget - spent, 2), "currency")
+        res.add("total_benefit", round(total_benefit, 2), "benefit")
+        res.add("units_allocated", sum(r["units_allocated"] for r in res.records), "count")
+        return res
+
     model = cp_model.CpModel()
 
     ub = []

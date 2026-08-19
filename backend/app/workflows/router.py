@@ -132,6 +132,22 @@ def improve_package(
     return orch.improve_package(req)
 
 
+@router.post("/improve/simulate/{session_id}", response_model=WorkflowStepResult)
+def improve_simulate(
+    session_id: str,
+    orch: WorkflowOrchestrator = Depends(get_orchestrator)
+) -> WorkflowStepResult:
+    return orch.improve_simulate(session_id)
+
+
+@router.post("/improve/compare/{session_id}", response_model=WorkflowStepResult)
+def improve_compare(
+    session_id: str,
+    orch: WorkflowOrchestrator = Depends(get_orchestrator)
+) -> WorkflowStepResult:
+    return orch.improve_compare(session_id)
+
+
 @router.post("/improve/commit/{session_id}", response_model=WorkflowStepResult)
 def improve_commit(
     session_id: str,

@@ -462,9 +462,61 @@ class WorkflowOrchestrator:
             provenance={"dataset_version": self.cfg.dataset_version}
         )
 
+    def improve_simulate(self, session_id: str) -> WorkflowStepResult:
+        session = workflow_state_service.get(session_id)
+        validate_prerequisite(session, "package", "simulate")
+
+        sid = int(session.scenario_id) if session.scenario_id and session.scenario_id.isdigit() else 1
+        sim_out = self.analysis_svc.compute_accessibility(scenario_id=sid)
+
+        workflow_state_service.complete_step(
+            session_id,
+            step_id="simulate",
+            context_patch={"sim_output": sim_out},
+            next_step="compare"
+        )
+
+        session = workflow_state_service.get(session_id)
+
+        return WorkflowStepResult(
+            session_id=session.session_id,
+            workflow_id=WorkflowId.IMPROVE,
+            step_id="simulate",
+            status=StepStatus.COMPLETE,
+            data=sim_out,
+            next_actions=self._build_next_actions(session),
+            provenance={"dataset_version": self.cfg.dataset_version}
+        )
+
+    def improve_compare(self, session_id: str) -> WorkflowStepResult:
+        session = workflow_state_service.get(session_id)
+        validate_prerequisite(session, "simulate", "compare")
+
+        sid = int(session.scenario_id) if session.scenario_id and session.scenario_id.isdigit() else 1
+        comp_out = self.scenario_svc.compare(scenario_ids=[1, sid], facility_type="hospital")
+
+        workflow_state_service.complete_step(
+            session_id,
+            step_id="compare",
+            context_patch={"compare_output": comp_out},
+            next_step="commit"
+        )
+
+        session = workflow_state_service.get(session_id)
+
+        return WorkflowStepResult(
+            session_id=session.session_id,
+            workflow_id=WorkflowId.IMPROVE,
+            step_id="compare",
+            status=StepStatus.COMPLETE,
+            data=comp_out,
+            next_actions=self._build_next_actions(session),
+            provenance={"dataset_version": self.cfg.dataset_version}
+        )
+
     def improve_commit(self, session_id: str) -> WorkflowStepResult:
         session = workflow_state_service.get(session_id)
-        validate_prerequisite(session, "package", "commit")
+        validate_prerequisite(session, "compare", "commit")
 
         sid = int(session.scenario_id) if session.scenario_id and session.scenario_id.isdigit() else 1
         pkg = session.context.get("package_output", {})

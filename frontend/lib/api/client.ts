@@ -410,6 +410,12 @@ export const api = {
       body: JSON.stringify(req)
     })) ?? null,
 
+  improveSimulate: async (sessionId: string): Promise<any> =>
+    (await tryFetch(`/workflows/improve/simulate/${sessionId}`, { method: "POST" })) ?? null,
+
+  improveCompare: async (sessionId: string): Promise<any> =>
+    (await tryFetch(`/workflows/improve/compare/${sessionId}`, { method: "POST" })) ?? null,
+
   improveCommit: async (sessionId: string): Promise<any> =>
     (await tryFetch(`/workflows/improve/commit/${sessionId}`, { method: "POST" })) ?? null,
 
