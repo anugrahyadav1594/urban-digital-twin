@@ -14,7 +14,8 @@ const GROUPS: Group[] = [
   { label: "Planning", items: [{ id: "planning", label: "Site suitability / tools", kbd: "⌘ 2" }, { id: "inspector", label: "Object inspector" }] },
   { label: "Analysis", items: [{ id: "analysis", label: "Analysis", kbd: "⌘ 3" }, { id: "results", label: "Results" }] },
   { label: "Simulation", items: [{ id: "simulation", label: "Simulation controls" }, { id: "jobs", label: "Job monitor" }] },
-  { label: "Compare", items: [{ id: "comparison", label: "Scenario comparison", kbd: "⌘ 6" }] },
+  { label: "Emergency", items: [{ id: "emergency", label: "Route finder / disaster simulator" }] },
+  { label: "Compare", items: [{ id: "comparison", label: "Scenario comparison", kbd: "⌘ 6" }, { id: "regions", label: "Comparison regions" }] },
   { label: "AI", items: [{ id: "ai", label: "Planning assistant", kbd: "⌘ 5" }, { id: "trace", label: "Agent trace" }] }
 ];
 
@@ -45,6 +46,7 @@ const GROUP_ICONS: Record<string, React.ReactNode> = {
   Planning: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>,
   Analysis: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
   Simulation: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><polygon points="5 3 19 12 5 21 5 3"/></svg>,
+  Emergency: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M12 5v14"/><path d="M5 12h14"/></svg>,
   Compare: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></svg>,
   AI: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/></svg>
 };

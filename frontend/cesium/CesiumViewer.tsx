@@ -1,15 +1,15 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { CITY_CENTER, ION_TOKEN } from "@/lib/constants";
-import { FACILITIES, FLOOD_ZONE, PARCELS, ROADS, ZONE_COLOR, PARCEL_BY_ID } from "@/lib/city-model";
+import { FACILITIES, FLOOD_ZONE, PARCELS, ROADS, ZONE_COLOR } from "@/lib/city-model";
 import { loadAllLive } from "./liveData";
+import { loadRegion, flyToRegion, setRegionLayerVisible } from "./regionData";
 import { api } from "@/lib/api/client";
 import { mapBridge } from "./map-bridge";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { useWindowStore } from "@/stores/window-store";
-import { useAnalysisStore } from "@/stores/analysis-store";
 import type { LayerKind, ResultEntity } from "@/types";
 
 /** CesiumJS is loaded from /public/cesium by a <script> in app/layout.tsx. */
@@ -330,7 +330,7 @@ export default function CesiumViewer() {
         /* ── data sources, one per logical layer ─────────────── */
         const ds: Record<string, any> = {};
         const currentLayers = useLayerStore.getState().layers;
-        for (const key of ["buildings", "parcels", "roads", "highways", "landuse", "population", "water", "flood", "facilities", "candidates", "proposals", "emergency"]) {
+        for (const key of ["buildings", "parcels", "roads", "highways", "landuse", "population", "water", "flood", "facilities", "candidates", "proposals", "emergency", "region"]) {
           ds[key] = new Cesium.CustomDataSource(key);
           const found = currentLayers.find((l) => l.id === key);
           if (found) ds[key].show = found.visible;
@@ -450,183 +450,24 @@ export default function CesiumViewer() {
           });
         }
 
-        /* ── picking & entity resolution ─────────────────────── */
-        /**
-         * Resolves any feature/result identifier to a Cesium entity across all layers.
-         * Handles canonical IDs, candidate prefixes (cand_), parcel prefixes (pf_, parcel:),
-         * building prefixes (building:), live compound IDs (e.g. parcel:42:0), and properties.ref.
-         */
-        const findCesiumEntity = (id: string): any => {
-          if (!id || typeof id !== "string") return null;
-
-          if (viewer?.entities?.getById) {
-            const ve = viewer.entities.getById(id);
-            if (ve) return ve;
-          }
-
-          const stripped = id.replace(
-            /^(cand_ring_|cand_|pf_|lu_|pop_|fl_|building:|parcel:|facility:|road:|water:|flood:)/,
-            ""
-          );
-
-          const keysToTry = [
-            id,
-            "cand_" + id,
-            "cand_ring_" + id,
-            "cand_" + stripped,
-            "pf_" + id,
-            "pf_" + stripped,
-            "parcel:" + id,
-            "parcel:" + stripped,
-            "building:" + id,
-            "building:" + stripped,
-            "facility:" + id,
-            "facility:" + stripped,
-            "road:" + id,
-            "road:" + stripped,
-            "lu_" + id,
-            "pop_" + id,
-            "fl_" + id,
-            stripped
-          ];
-
-          const prioritySources = [
-            "candidates",
-            "parcels",
-            "buildings",
-            "facilities",
-            "roads",
-            "emergency",
-            "proposals",
-            "landuse",
-            "population",
-            "flood",
-            "water"
-          ];
-
-          // 1. Direct getById lookup
-          for (const name of prioritySources) {
-            const src = ds[name];
-            if (!src?.entities?.getById) continue;
-            for (const key of keysToTry) {
-              const e = src.entities.getById(key);
-              if (e) return e;
-            }
-          }
-
-          // 2. Iterate entities to match compound live IDs (e.g. "parcel:42:0") or properties.ref
-          for (const name of prioritySources) {
-            const src = ds[name];
-            if (!src?.entities?.values) continue;
-            const match = src.entities.values.find((e: any) => {
-              const eid = String(e.id ?? "");
-              if (eid === id || eid === stripped) return true;
-              if (
-                eid.startsWith(`parcel:${id}:`) ||
-                eid.startsWith(`parcel:${stripped}:`) ||
-                eid.startsWith(`building:${id}:`) ||
-                eid.startsWith(`building:${stripped}:`) ||
-                eid.startsWith(`facility:${id}`) ||
-                eid.startsWith(`facility:${stripped}`) ||
-                eid.startsWith(`road:${id}:`) ||
-                eid.startsWith(`road:${stripped}:`)
-              ) {
-                return true;
-              }
-              const ref = e.properties?.ref?.getValue?.() ?? e.properties?.ref;
-              if (ref !== undefined && ref !== null) {
-                const sRef = String(ref);
-                if (sRef === id || sRef === stripped) return true;
-              }
-              return false;
-            });
-            if (match) return match;
-          }
-
-          return null;
-        };
-
-        /**
-         * Resolves coordinates for an identifier from active analysis results,
-         * selection store, or procedural models when no Cesium entity is available.
-         */
-        const findEntityCoordinates = (id: string): { lon: number; lat: number } | null => {
-          if (!id) return null;
-          const stripped = id.replace(
-            /^(cand_ring_|cand_|pf_|lu_|pop_|fl_|building:|parcel:|facility:|road:|water:|flood:)/,
-            ""
-          );
-
-          // Check active analysis results
-          const results = useAnalysisStore.getState().results;
-          for (const res of results) {
-            const match = res.entities.find(
-              (e) =>
-                e.entityId === id ||
-                e.entityId === stripped ||
-                e.label === id ||
-                String(e.entityId) === String(id) ||
-                String(e.entityId) === String(stripped)
-            );
-            if (match?.position && Number.isFinite(match.position.lon) && Number.isFinite(match.position.lat)) {
-              return { lon: match.position.lon, lat: match.position.lat };
-            }
-          }
-
-          // Check selection feature
-          const feat = useSelectionStore.getState().feature;
-          if (
-            feat &&
-            (feat.id === id || feat.id === stripped) &&
-            feat.position &&
-            Number.isFinite(feat.position.lon)
-          ) {
-            return { lon: feat.position.lon, lat: feat.position.lat };
-          }
-
-          // Check procedural parcels
-          const p =
-            PARCEL_BY_ID.get(id) ??
-            PARCEL_BY_ID.get(stripped) ??
-            PARCEL_BY_ID.get("parcel_" + id) ??
-            PARCEL_BY_ID.get("parcel_" + stripped) ??
-            PARCELS.find((x) => x.id === id || x.id === stripped || String(x.idx) === id || String(x.idx) === stripped);
-          if (p) return { lon: p.lon, lat: p.lat };
-
-          // Check procedural facilities
-          const f = FACILITIES.find((x) => x.id === id || x.id === stripped || x.id === "facility:" + id || x.id === "facility:" + stripped);
-          if (f) return { lon: f.lon, lat: f.lat };
-
-          // Check procedural roads
-          const r = ROADS.find((x) => x.id === id || x.id === stripped);
-          if (r?.path?.length) {
-            const mid = r.path[Math.floor(r.path.length / 2)];
-            return { lon: mid[0], lat: mid[1] };
-          }
-
-          return null;
-        };
-
+        /* ── picking ─────────────────────────────────────────── */
         let highlighted: any[] = [];
         const clearHighlight = () => {
           highlighted.forEach((e) => {
-            const target = e.box ?? e.rectangle ?? e.polygon ?? e.cylinder;
-            if (target && e.__origMat !== undefined) {
-              target.material = e.__origMat;
-            }
+            if (e.box) e.box.material = e.__origMat;
+            if (e.rectangle) e.rectangle.material = e.__origMat;
           });
           highlighted = [];
         };
         const applyHighlight = (ids: string[]) => {
           clearHighlight();
           ids.forEach((id) => {
-            const e = findCesiumEntity(id);
+            const e = ds.buildings.entities.getById(id) || ds.parcels.entities.getById("pf_" + id);
             if (!e) return;
-            const target = e.box ?? e.rectangle ?? e.polygon ?? e.cylinder;
-            if (!target) return;
-            e.__origMat = target.material;
+            e.__origMat = e.box ? e.box.material : e.rectangle?.material;
             const mat = C("#38bdf8", 0.95);
-            target.material = mat;
+            if (e.box) e.box.material = mat;
+            else if (e.rectangle) e.rectangle.material = mat;
             highlighted.push(e);
           });
         };
@@ -954,52 +795,13 @@ export default function CesiumViewer() {
           rotateGlobe,
           toggleAutoRotate,
           toggleHighways,
-          flyTo: async (entityId: string) => {
-            if (!entityId) {
-              console.warn("[cesium] flyTo: empty entityId provided");
-              return;
-            }
-
-            // 1. Try resolving to an actual Cesium entity
-            const entity = findCesiumEntity(entityId);
-            if (entity) {
-              applyHighlight([entityId]);
-              const isTopDown = activeViewModeRef.current === "topDown";
-              const pitch = isTopDown ? Cesium.Math.toRadians(-90) : Cesium.Math.toRadians(-45);
-              const range = 500;
-
-              try {
-                await viewer.flyTo(entity, {
-                  duration: 1.5,
-                  offset: new Cesium.HeadingPitchRange(0, pitch, range)
-                });
-                return;
-              } catch {
-                // viewer.flyTo can be cancelled if user triggered another flight
-                return;
-              }
-            }
-
-            // 2. Fallback to coordinate resolution
-            const pos = findEntityCoordinates(entityId);
-            if (pos) {
-              applyHighlight([entityId]);
-              const isTopDown = activeViewModeRef.current === "topDown";
-              flyHomeShortestRoute(
-                pos.lon,
-                isTopDown ? pos.lat : pos.lat - 0.006,
-                isTopDown ? 1400 : 1000,
-                {
-                  heading: 0,
-                  pitch: isTopDown ? Cesium.Math.toRadians(-90) : Cesium.Math.toRadians(-45),
-                  roll: 0
-                }
-              );
-              return;
-            }
-
-            // 3. Failed lookup
-            console.warn("[cesium] flyTo: entity or location not found for ID:", entityId);
+          flyTo: (entityId: string) => {
+            const p = PARCELS.find((x) => x.id === entityId);
+            const f = FACILITIES.find((x) => x.id === entityId);
+            const target = p ?? f;
+            if (!target) return;
+            flyHomeShortestRoute(target.lon, target.lat - 0.014, 2100);
+            applyHighlight([entityId]);
           },
           highlight: applyHighlight,
           setLayerVisible: (id: LayerKind, v: boolean) => {
@@ -1177,29 +979,66 @@ export default function CesiumViewer() {
             }
           },
           clearEmergency: () => ds.emergency.entities.removeAll(),  // routes, hazard and network impact all live here
-          clearCandidates: () => ds.candidates.entities.removeAll(),
-          clearProposals: () => ds.proposals.entities.removeAll(),
-          showRoadProposal: (geom: any) => {
-            ds.proposals.entities.removeById("proposal_road");
-            if (!geom) return;
-            let coords: number[][] = [];
-            if (geom.type === "LineString" && Array.isArray(geom.coordinates)) {
-              coords = geom.coordinates;
-            } else if (Array.isArray(geom)) {
-              coords = geom;
-            }
-            if (coords.length > 1) {
-              ds.proposals.entities.add({
-                id: "proposal_road",
+
+          /* ── comparison regions ───────────────────────────────
+             Drawn into their own data source so switching region
+             never disturbs the pilot sector's live layers. The pilot
+             stays loaded underneath; hide it while a remote region is
+             shown so the two cities are not stacked on one globe. */
+          showRegion: async (regionId: string) => {
+            const pilot = ["buildings", "roads", "facilities", "water", "parcels", "flood", "highways"];
+            const res = await loadRegion(Cesium, ds.region, regionId);
+            const remote = regionId !== "adivali_devad";
+            for (const k of pilot) if (ds[k]) ds[k].show = !remote;
+            ds.region.show = true;
+            if (res.bounds) flyToRegion(Cesium, viewer, res.bounds);
+            return { counts: res.counts, status: res.status, total: res.total };
+          },
+          clearRegion: () => {
+            ds.region.entities.removeAll();
+            // Restore the pilot layers to whatever the layer panel says.
+            const ls = useLayerStore.getState().layers;
+            for (const l of ls) if (ds[l.id]) ds[l.id].show = l.visible;
+          },
+          setRegionLayerVisible: (layer: string, visible: boolean) =>
+            setRegionLayerVisible(ds.region, layer, visible),
+          /* Draw a proposed road alignment returned by /planning/road-proposal.
+             PlanningPanel already called this; the handler was never
+             implemented, so the analysis ran but nothing appeared. */
+          showRoadProposal: (geometry: any) => {
+            ds.proposals.entities.removeAll();
+            const lines: number[][][] = [];
+            const g = geometry?.geometry ?? geometry;
+            if (g?.type === "LineString") lines.push(g.coordinates);
+            else if (g?.type === "MultiLineString") lines.push(...g.coordinates);
+            else if (Array.isArray(g)) lines.push(g as number[][]);
+            if (!lines.length) return;
+
+            const drawn: any[] = [];
+            lines.forEach((coords, i) => {
+              const flat: number[] = [];
+              for (const pt of coords) {
+                if (Number.isFinite(pt?.[0]) && Number.isFinite(pt?.[1])) flat.push(pt[0], pt[1]);
+              }
+              if (flat.length < 4) return;
+              drawn.push(ds.proposals.entities.add({
+                id: `road-proposal-${i}`,
                 polyline: {
-                  positions: Cesium.Cartesian3.fromDegreesArray(coords.flat()),
+                  positions: Cesium.Cartesian3.fromDegreesArray(flat),
                   width: 8,
-                  material: C("#a855f7", 0.95),
+                  material: new Cesium.PolylineGlowMaterialProperty({
+                    color: C("#22c55e", 0.95),
+                    glowPower: 0.25
+                  }),
                   clampToGround: true
                 }
-              });
-            }
+              }));
+            });
+            ds.proposals.show = true;
+            if (drawn.length) viewer.flyTo(drawn, { duration: 1.4 }).catch(() => {});
           },
+          clearCandidates: () => ds.candidates.entities.removeAll(),
+          clearProposals: () => ds.proposals.entities.removeAll(),
           setDrawMode: () => { },
           placeFacility: () => { },
           setYear: (y: number) => {

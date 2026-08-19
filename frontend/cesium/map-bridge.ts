@@ -26,7 +26,6 @@ export type BridgeImpl = {
   setDrawMode: (mode: string) => void;
   placeFacility: (type: string) => void;
   clearProposals: () => void;
-  showRoadProposal?: (geom: any) => void;
   rotateGlobe: (dir: "up" | "down" | "left" | "right" | "rollLeft" | "rollRight") => void;
   toggleAutoRotate: () => void;
   toggleHighways: (show?: boolean) => void;
@@ -34,6 +33,17 @@ export type BridgeImpl = {
   showHazard: (hazard: HazardFootprint | null) => void;
   showNetworkImpact: (impact: NetworkImpact | null) => void;
   clearEmergency: () => void;
+  showRoadProposal: (geometry: any) => void;
+  showRegion: (regionId: string) => Promise<RegionLoadResult>;
+  clearRegion: () => void;
+  setRegionLayerVisible: (layer: string, visible: boolean) => void;
+};
+
+/** What the viewer reports back after drawing a comparison region. */
+export type RegionLoadResult = {
+  counts: Record<string, number>;
+  status: Record<string, string>;
+  total: number;
 };
 
 /** A responder route drawn on the map: lon/lat path plus display metadata. */
@@ -86,12 +96,19 @@ export const mapBridge = {
   setDrawMode: (m: string) => (impl.setDrawMode ?? noop)(m),
   placeFacility: (t: string) => (impl.placeFacility ?? noop)(t),
   clearProposals: () => (impl.clearProposals ?? noop)(),
-  showRoadProposal: (geom: any) => (impl.showRoadProposal ?? noop)(geom),
   rotateGlobe: (dir: "up" | "down" | "left" | "right" | "rollLeft" | "rollRight") => (impl.rotateGlobe ?? noop)(dir),
   toggleAutoRotate: () => (impl.toggleAutoRotate ?? noop)(),
   toggleHighways: (show?: boolean) => (impl.toggleHighways ?? noop)(show),
   showEmergencyRoutes: (r: EmergencyRoute[]) => (impl.showEmergencyRoutes ?? noop)(r),
   showHazard: (h: HazardFootprint | null) => (impl.showHazard ?? noop)(h),
   showNetworkImpact: (n: NetworkImpact) => (impl.showNetworkImpact ?? noop)(n),
-  clearEmergency: () => (impl.clearEmergency ?? noop)()
+  clearEmergency: () => (impl.clearEmergency ?? noop)(),
+  showRoadProposal: (geometry: any) => (impl.showRoadProposal ?? noop)(geometry),
+  showRegion: (id: string): Promise<RegionLoadResult> =>
+    impl.showRegion
+      ? impl.showRegion(id)
+      : Promise.resolve({ counts: {}, status: { error: "viewer not ready" }, total: 0 }),
+  clearRegion: () => (impl.clearRegion ?? noop)(),
+  setRegionLayerVisible: (layer: string, v: boolean) =>
+    (impl.setRegionLayerVisible ?? noop)(layer, v)
 };
