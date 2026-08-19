@@ -332,6 +332,13 @@ export const api = {
 
   listLayers: async (): Promise<Layer[] | null> => await tryFetch<Layer[]>("/layers"),
 
+  /** Comparison regions extracted by db/extract_batch.py. */
+  listRegions: async (): Promise<any[]> => (await tryFetch<any[]>("/regions")) ?? [],
+
+  /** One region as a single FeatureCollection (all layers, tagged). */
+  getRegionGeoJSON: async (regionId: string): Promise<any> =>
+    await tryFetch(`/regions/${regionId}/geojson`, undefined, T_ANALYSIS),
+
   getLayerGeoJSON: async (layerId: string): Promise<any> => {
     const [id, qs] = layerId.split("?");
     return (await tryFetch(`/layers/${id}/geojson${qs ? "?" + qs : ""}`, undefined, 60000)) ?? null;

@@ -15,6 +15,7 @@ import JobMonitorPanel from "@/components/panels/JobMonitorPanel";
 import ComparisonPanel from "@/components/panels/ComparisonPanel";
 import AIPanel from "@/components/panels/AIPanel";
 import AgentTracePanel from "@/components/panels/AgentTracePanel";
+import RegionsPanel from "@/components/panels/RegionsPanel";
 
 export const WINDOW_CONTENT: Record<WindowId, React.ComponentType> = {
   city: CityPanel,
@@ -28,6 +29,7 @@ export const WINDOW_CONTENT: Record<WindowId, React.ComponentType> = {
   results: ResultsPanel,
   simulation: SimulationPanel,
   emergency: EmergencyPanel,
+  regions: RegionsPanel,
   jobs: JobMonitorPanel,
   comparison: ComparisonPanel,
   ai: AIPanel,
