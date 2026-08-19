@@ -175,7 +175,8 @@ def route_to_incident(
             "path": _path_geometry(path),
         })
 
-    rows.sort(key=lambda r: (r["response_time_s"], r["station_id"]))
+    rows.sort(key=lambda r: (r.get("response_time_s", float("inf")),
+                             str(r.get("station_id", ""))))
     for i, r in enumerate(rows, start=1):
         r["rank"] = i
         r["is_primary"] = i == 1
@@ -190,11 +191,11 @@ def route_to_incident(
             "network; the route set is incomplete by that much")
     if rows:
         best = rows[0]
-        res.add("best_response_time_s", best["response_time_s"], "seconds")
-        res.add("best_response_time_min", best["response_time_min"], "minutes")
-        res.add("best_distance_m", best["distance_m"], "m")
-        res.add("meets_response_target", 1 if best["within_target"] else 0, "bool")
-        if not best["within_target"]:
+        res.add("best_response_time_s", best.get("response_time_s"), "seconds")
+        res.add("best_response_time_min", best.get("response_time_min"), "minutes")
+        res.add("best_distance_m", best.get("distance_m"), "m")
+        res.add("meets_response_target", 1 if best.get("within_target") else 0, "bool")
+        if not best.get("within_target"):
             res.warnings.append(
                 f"fastest unit arrives in {best['response_time_min']:.1f} min, "
                 f"outside the {response_target_seconds / 60.0:.0f} min target")
@@ -237,26 +238,37 @@ def compare_routes(
         dict(a or {}, scenario="degraded") if a else None,
     ) if r]
 
-    if b:
-        res.add("baseline_response_s", b["response_s"], "seconds")
-    if a:
-        res.add("degraded_response_s", a["response_time_s"], "seconds")
-    if b and a:
-        delta = a["response_time_s"] - b["response_time_s"]
+    # .get() rather than [] throughout: a record is built by this module, but
+    # a partially-applied patch or an older cached result can be missing a key,
+    # and a KeyError here would discard an entire completed simulation.
+    def secs(rec: dict[str, Any] | None) -> float | None:
+        if not rec:
+            return None
+        v = rec.get("response_time_s")
+        if v is None and rec.get("response_time_min") is not None:
+            v = float(rec["response_time_min"]) * 60.0
+        return None if v is None else float(v)
+
+    b_s, a_s = secs(b), secs(a)
+    if b_s is not None:
+        res.add("baseline_response_s", round(b_s, 1), "seconds")
+    if a_s is not None:
+        res.add("degraded_response_s", round(a_s, 1), "seconds")
+    if b_s is not None and a_s is not None:
+        delta = a_s - b_s
         res.add("delay_s", round(delta, 1), "seconds")
         res.add("delay_min", round(delta / 60.0, 2), "minutes")
         res.add("delay_pct",
-                round(100.0 * delta / b["response_time_s"], 1)
-                if b["response_time_s"] else 0.0, "percent")
-        if b["within_target"] and not a["within_target"]:
+                round(100.0 * delta / b_s, 1) if b_s else 0.0, "percent")
+        if b.get("within_target") and not a.get("within_target"):
             res.warnings.append(
                 "the disruption pushes this incident outside the response "
                 "target; it was inside before")
-        if a["station_id"] != b["station_id"]:
+        if a.get("station_id") != b.get("station_id"):
             res.warnings.append(
-                f"primary responder changes from {b['station_name']} to "
-                f"{a['station_name']} under these conditions")
-    elif b and not a:
+                f"primary responder changes from {b.get('station_name', '?')} "
+                f"to {a.get('station_name', '?')} under these conditions")
+    elif b_s is not None and a_s is None:
         res.warnings.append(
             "the incident becomes UNREACHABLE under these conditions; "
             "no unit can arrive by road")

@@ -59,6 +59,10 @@ export default function EmergencyPanel() {
 
   const activeScenario = useScenarioStore((s) => s.scenarios.find((x) => x.id === s.activeId));
   const picked = useMapStore((s) => s.lastClick);
+  // Picking is armed explicitly. Previously ANY map click silently moved the
+  // incident, so selecting a building to inspect it also changed the thing you
+  // were about to route to.
+  const [picking, setPicking] = useState(false);
 
   useEffect(() => {
     api.emergencyCatalogue().then((c) => {
@@ -72,11 +76,14 @@ export default function EmergencyPanel() {
 
   // If the map store exposes a last-clicked coordinate, offer it as the incident.
   useEffect(() => {
+    if (!picking) return;
     if (picked && typeof picked.lon === "number" && typeof picked.lat === "number") {
       setLon(Number(picked.lon.toFixed(6)));
       setLat(Number(picked.lat.toFixed(6)));
+      setPicking(false);
+      mapBridge.showHazard({ center: [picked.lon, picked.lat], label: "Incident" });
     }
-  }, [picked]);
+  }, [picked, picking]);
 
   const hazardSpec = cat.hazards.find((h) => h.id === hazardType);
   const applicable = (m: Measure) => !m.appliesTo.length || m.appliesTo.includes(hazardType);
@@ -84,12 +91,17 @@ export default function EmergencyPanel() {
   const toggleMeasure = (id: string) =>
     setMeasures((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  const runRoute = async () => {
-    setBusy(true); setErr(null); setSim(null);
+  /** Route under the blockages produced by the last simulation, if asked. */
+  const runRoute = async (useHazard = false) => {
+    setBusy(true); setErr(null);
+    if (!useHazard) setSim(null);
     try {
+      const blocked: string[] = useHazard ? (sim?.network?.blocked_ids ?? []) : [];
+      const slowed: string[] = useHazard ? (sim?.network?.slowed_ids ?? []) : [];
       const out = await api.emergencyRoute({
         lon, lat, responderType: responder, topN: 3,
         turnoutSeconds: turnout, responseTargetSeconds: targetMin * 60,
+        blockedRoadIds: blocked, slowedRoadIds: slowed,
         scenario_id: activeScenario?.id
       });
       if (!out) { setErr("No route data returned."); setRoutes(null); return; }
@@ -169,8 +181,19 @@ export default function EmergencyPanel() {
             onChange={(e) => setLat(Number(e.target.value))} />
         </Field>
       </div>
-      <div className="muted" style={{ fontSize: 10.5, marginTop: -4, marginBottom: 10 }}>
-        Click the map to set this, or type coordinates directly.
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: -2, marginBottom: 10 }}>
+        <button className={picking ? "btn primary" : "btn ghost"}
+          style={{ fontSize: 10.5, padding: "3px 8px" }}
+          onClick={() => setPicking((v) => !v)}>
+          {picking ? "CLICK THE MAP…" : "PICK ON MAP"}
+        </button>
+        <button className="btn ghost" style={{ fontSize: 10.5, padding: "3px 8px" }}
+          onClick={() => mapBridge.showHazard({ center: [lon, lat], label: "Incident" })}>
+          SHOW
+        </button>
+        <span className="muted" style={{ fontSize: 10 }}>
+          {picking ? "next map click sets the incident" : "or type coordinates"}
+        </span>
       </div>
 
       {tab === "route" ? (
@@ -193,25 +216,49 @@ export default function EmergencyPanel() {
               onChange={(e) => setTurnout(Number(e.target.value))} />
           </Field>
 
-          <button className="btn primary wide" disabled={busy} onClick={runRoute}>
+          <button className="btn primary wide" disabled={busy} onClick={() => runRoute(false)}>
             {busy ? "ROUTING…" : "FIND FASTEST UNITS"}
           </button>
+          {sim?.network?.blocked_count > 0 && (
+            <button className="btn ghost wide" style={{ marginTop: 6 }} disabled={busy}
+              title="Re-run using the roads closed by the last simulation"
+              onClick={() => runRoute(true)}>
+              ROUTE THROUGH LAST HAZARD ({sim.network.blocked_count} roads closed)
+            </button>
+          )}
 
           {routes && (
             <>
               <SectionTitle>Dispatch order</SectionTitle>
               {routes.length === 0 && (
-                <div className="muted" style={{ fontSize: 11.5 }}>
-                  No unit can reach this incident on the current network.
+                <div style={{ fontSize: 11, background: "rgba(239,68,68,.08)",
+                              border: "1px solid rgba(239,68,68,.3)",
+                              borderRadius: 4, padding: "7px 8px" }}>
+                  <b>No unit could reach this incident.</b>
+                  <div className="muted" style={{ marginTop: 4, lineHeight: 1.5 }}>
+                    Usually one of:
+                    <br />• no <span className="mono">{responder}</span> exists in the
+                    database — try another service below
+                    <br />• the incident is far from any mapped road — move it nearer a street
+                    <br />• the road network has a gap at this location
+                  </div>
                 </div>
               )}
               {routes.map((r: any) => (
-                <div key={r.station_id} style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "5px 7px",
-                  marginBottom: 4, borderRadius: 4,
-                  background: r.is_primary ? "rgba(0,229,255,.09)" : "transparent",
-                  border: "1px solid " + (r.is_primary ? "rgba(0,229,255,.35)" : "var(--line)")
-                }}>
+                <div key={r.station_id} title="Show only this unit's route on the map"
+                  onClick={() => {
+                    mapBridge.showEmergencyRoutes([{
+                      stationId: r.station_id, stationName: r.station_name,
+                      path: r.path, responseTimeMin: r.response_time_min,
+                      isPrimary: true, withinTarget: r.within_target
+                    }]);
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "5px 7px",
+                    marginBottom: 4, borderRadius: 4, cursor: "pointer",
+                    background: r.is_primary ? "rgba(0,229,255,.09)" : "transparent",
+                    border: "1px solid " + (r.is_primary ? "rgba(0,229,255,.35)" : "var(--line)")
+                  }}>
                   <span className="mono" style={{ width: 16, color: "var(--txt-dim)" }}>{r.rank}</span>
                   <span style={{ flex: 1, fontSize: 11.5 }}>{r.station_name}</span>
                   <span className="mono" style={{ fontSize: 11.5, color: r.within_target ? "var(--good)" : "var(--bad)" }}>
@@ -222,8 +269,30 @@ export default function EmergencyPanel() {
                   </span>
                 </div>
               ))}
-              <div className="muted" style={{ fontSize: 10.5, marginTop: 6 }}>
+              {routes.length > 0 && (
+                <div className="row" style={{ fontSize: 10.5, marginTop: 6, gap: 8 }}>
+                  <span style={{ flex: 1 }}>
+                    <b className="mono" style={{
+                      color: routes.some((r: any) => r.within_target) ? "var(--good)" : "var(--bad)"
+                    }}>
+                      {routes.filter((r: any) => r.within_target).length}/{routes.length}
+                    </b>{" "}
+                    within the {targetMin} min target
+                  </span>
+                  <button className="btn ghost" style={{ fontSize: 10, padding: "2px 7px" }}
+                    onClick={() => mapBridge.showEmergencyRoutes(routes.map((r: any) => ({
+                      stationId: r.station_id, stationName: r.station_name, path: r.path,
+                      responseTimeMin: r.response_time_min, isPrimary: r.is_primary,
+                      withinTarget: r.within_target
+                    })))}>
+                    SHOW ALL
+                  </button>
+                </div>
+              )}
+              <div className="muted" style={{ fontSize: 10.5, marginTop: 4 }}>
                 Includes {turnout}s turnout. Target {targetMin} min.
+                {routes[0]?.incident_snap_distance_m > 0 &&
+                  ` Incident snapped ${Math.round(routes[0].incident_snap_distance_m)} m to the nearest road.`}
               </div>
             </>
           )}
@@ -296,6 +365,14 @@ export default function EmergencyPanel() {
               <DeltaRow label="Roads blocked" a={m(sim.baseline, "roads_blocked")} b={m(sim.mitigated, "roads_blocked")} />
               <DeltaRow label="Hazard radius" a={m(sim.baseline, "hazard_radius_m")} b={m(sim.mitigated, "hazard_radius_m")} unit=" m" />
 
+              {sim.response?.error && (
+                <div style={{ marginTop: 8, fontSize: 10.5, color: "var(--warn)",
+                              border: "1px solid var(--line)", borderRadius: 4, padding: "6px 7px" }}>
+                  Exposure figures above are valid. Response routing could not be
+                  computed: {sim.response.error}
+                </div>
+              )}
+
               {sim.response && !sim.response.error && (
                 <>
                   <SectionTitle>Emergency response under these conditions</SectionTitle>
@@ -321,13 +398,25 @@ export default function EmergencyPanel() {
                           </span>
                         </>
                       ) : (
-                        <span className="mono" style={{ color: "var(--bad)" }}>CUT OFF</span>
+                        <span className="mono" style={{ color: "var(--bad)" }}
+                          title="No station could reach the incident under this condition">
+                          CUT OFF
+                        </span>
                       )}
                     </div>
                   ))}
                   <div className="muted" style={{ fontSize: 10.5, marginTop: 4 }}>
                     Roads blocked: {sim.response.roads_blocked_baseline} → {sim.response.roads_blocked_mitigated}
+                    {sim.network?.reopened_count > 0 &&
+                      ` · ${sim.network.reopened_count} reopened by measures (green on map)`}
+                    {sim.response.stations_evaluated != null &&
+                      ` · ${sim.response.stations_evaluated} station(s) evaluated`}
                   </div>
+                  {(sim.response.warnings ?? []).length > 0 && (
+                    <div style={{ fontSize: 10, marginTop: 3, color: "var(--warn)" }}>
+                      {sim.response.warnings.map((w: string, i: number) => <div key={i}>• {w}</div>)}
+                    </div>
+                  )}
                   {(sim.response.during_event?.staging_distance_m > 0 ||
                     sim.response.with_measures?.staging_distance_m > 0) && (
                     <div className="muted" style={{ fontSize: 10, marginTop: 3, color: "var(--warn)" }}>
