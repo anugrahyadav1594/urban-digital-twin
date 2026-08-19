@@ -116,7 +116,7 @@ The system combines AI interpretation with deterministic analytical tools for re
 
 ```text
                          ┌──────────────────────────┐
-                         │        User / Planner     │
+                         │        User / Planner    │
                          └────────────┬─────────────┘
                                       │
                                       ▼
@@ -129,10 +129,10 @@ The system combines AI interpretation with deterministic analytical tools for re
                                       │ HTTP / REST
                                       ▼
                  ┌────────────────────────────────────────┐
-                 │             FastAPI Backend             │
+                 │             FastAPI Backend            │
                  │                                        │
                  │ API v1 • Storage • Planning Workflow   │
-                 │ AI Agents • Deterministic Tooling       │
+                 │ AI Agents • Deterministic Tooling      │
                  └───────────────┬────────────────────────┘
                                  │
              ┌───────────────────┼────────────────────┐
