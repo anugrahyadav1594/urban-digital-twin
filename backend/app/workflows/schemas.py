@@ -76,7 +76,7 @@ class ConstraintValidationResult(BaseModel):
 
 class DecisionRecord(BaseModel):
     recommendation: str
-    overall_score: float
+    overall_score: float | None = None
     score_breakdown: dict[str, float] = Field(default_factory=dict)
     assumptions: list[str] = Field(default_factory=list)
     constraints: dict[str, str] = Field(default_factory=dict)

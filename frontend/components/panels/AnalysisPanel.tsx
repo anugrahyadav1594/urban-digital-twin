@@ -116,10 +116,10 @@ export default function AnalysisPanel() {
               onClick={() => { setSel(e.entityId); select(e.entityId); mapBridge.flyTo(e.entityId); }}>
               <div className="top">
                 <span><span className="rank">#{i + 1}</span> &nbsp;{e.label}</span>
-                <span className="score">{e.score.toFixed(1)}</span>
+                <span className="score">{e.score != null ? e.score.toFixed(1) : "Optimal"}</span>
               </div>
-              <div style={{ marginTop: 5 }}><Bar value={e.score} /></div>
-              {sel === e.entityId && (
+              {e.score != null && <div style={{ marginTop: 5 }}><Bar value={e.score} /></div>}
+              {sel === e.entityId && e.breakdown && (
                 <div style={{ marginTop: 8 }}>
                   {Object.entries(e.breakdown).map(([k, v]) => (
                     <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>

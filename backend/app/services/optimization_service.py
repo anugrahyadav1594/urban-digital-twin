@@ -26,7 +26,7 @@ class OptimizationService:
         num_facilities: int = 3,
         scenario_id: int | None = None
     ) -> dict[str, Any]:
-        """Perform facility location optimization using OR-Tools CP-SAT solver."""
+        """Perform facility location optimization using OR-Tools CP-SAT solver or deterministic greedy solver."""
         parcels = self.spatial.parcels()
         zones = self.spatial.population_zones()
 
@@ -76,20 +76,29 @@ class OptimizationService:
             eng_res = solve_facility_location(prob, prov)
 
         out = eng_res.to_dict()
+        summary = out.get("summary_metrics", {})
 
-        # Build entity candidate list for map rendering
+        cov_val = summary.get("coverage_ratio", {}).get("value")
+        served_val = summary.get("demand_served", {}).get("value")
+        cost_val = summary.get("mean_cost_per_demand_unit", {}).get("value")
+
         selected_sites = []
         for r in out.get("records", []):
             if "selected_sites" in r:
                 selected_sites.extend(r["selected_sites"])
 
         entities = []
-        for i, site_id in enumerate(selected_sites):
+        for site_id in selected_sites:
             entities.append({
                 "id": str(site_id),
-                "label": f"Optimal {facility_type} Site #{i+1}",
-                "score": round(100.0 - (i * 3.0), 1),
-                "parcel_id": str(site_id)
+                "label": f"{facility_type.capitalize()} Site ({site_id})",
+                "parcel_id": str(site_id),
+                "score": None,
+                "metrics": {
+                    "coverage_ratio": cov_val,
+                    "demand_served": served_val,
+                    "mean_cost_per_demand_unit": cost_val
+                }
             })
 
         out["result_id"] = f"res_opt_{facility_type.lower()}_{num_facilities}"

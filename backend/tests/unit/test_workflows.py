@@ -146,12 +146,25 @@ def test_compare_workflow_rejection_less_than_two_scenarios(orchestrator):
         ))
 
 
-def test_explain_decision_record(orchestrator):
+def test_explain_decision_record_missing_result(orchestrator):
     record = orchestrator.explain_decision(ExplainDecisionRequest(
         scenario_id="1"
     ))
     assert record.recommendation != ""
-    assert record.overall_score > 0
-    assert "flood" in record.constraints
-    assert len(record.assumptions) > 0
+    assert record.overall_score is None
+    assert len(record.limitations) > 0
+
+
+def test_explain_decision_record_with_result(orchestrator):
+    orchestrator.decision_svc.results_repo.get = MagicMock(return_value={
+        "title": "Hospital Suitability Analysis",
+        "records": [{"parcel_id": "parcel_42", "score": 88.5, "breakdown": {"travel": 90.0}}],
+        "summary_metrics": {"population_served": {"value": 45000}}
+    })
+    record = orchestrator.explain_decision(ExplainDecisionRequest(
+        result_id="res_suit_123",
+        scenario_id="1"
+    ))
+    assert record.overall_score == 88.5
+    assert record.affected_population == 45000
     assert len(record.benefits) > 0
