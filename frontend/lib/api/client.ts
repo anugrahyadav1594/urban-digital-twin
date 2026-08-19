@@ -346,4 +346,88 @@ export const api = {
 
   getResult: async (resultId: string): Promise<any> =>
     (await tryFetch(`/results/${resultId}`)) ?? null,
+
+  // --------------------------------------------------------------------------
+  // BACKEND WORKFLOW API ADAPTERS
+  // --------------------------------------------------------------------------
+  startWorkflow: async (workflowId: string, scenarioId?: string | number): Promise<any> =>
+    (await tryFetch("/workflows/start", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: workflowId, scenario_id: scenarioId })
+    })) ?? null,
+
+  getWorkflowSession: async (sessionId: string): Promise<any> =>
+    (await tryFetch(`/workflows/session/${sessionId}`)) ?? null,
+
+  planCandidates: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/plan/candidates", {
+      method: "POST",
+      body: JSON.stringify(req)
+    }, T_ANALYSIS)) ?? null,
+
+  planValidate: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/plan/validate", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })) ?? null,
+
+  planCommit: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/plan/commit", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })) ?? null,
+
+  stressSimulate: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/stress/simulate", {
+      method: "POST",
+      body: JSON.stringify(req)
+    }, T_ANALYSIS)) ?? null,
+
+  stressReroute: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/stress/reroute", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })) ?? null,
+
+  stressMitigate: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/stress/mitigate", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })) ?? null,
+
+  improveAudit: async (sessionId: string): Promise<any> =>
+    (await tryFetch(`/workflows/improve/audit/${sessionId}`, { method: "POST" })) ?? null,
+
+  improveGaps: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/improve/gaps", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })) ?? null,
+
+  improvePackage: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/improve/package", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })) ?? null,
+
+  improveCommit: async (sessionId: string): Promise<any> =>
+    (await tryFetch(`/workflows/improve/commit/${sessionId}`, { method: "POST" })) ?? null,
+
+  compareEvaluate: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/compare/evaluate", {
+      method: "POST",
+      body: JSON.stringify(req)
+    }, T_ANALYSIS)) ?? null,
+
+  compareSelect: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/compare/select", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })) ?? null,
+
+  explainDecisionRecord: async (req: any): Promise<any> =>
+    (await tryFetch("/workflows/explain/decision-record", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })) ?? null,
 };
