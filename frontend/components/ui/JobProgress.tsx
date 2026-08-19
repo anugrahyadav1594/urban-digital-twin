@@ -1,8 +1,12 @@
 "use client";
+
 import type { Job } from "@/types";
+import { useWindowStore } from "@/stores/window-store";
 import { Bar } from "./Bits";
 
 export default function JobProgress({ job }: { job: Job }) {
+  const openWindow = useWindowStore((s) => s.openWindow);
+
   return (
     <div style={{ border: "1px solid var(--line-soft)", borderRadius: 6, padding: 9, marginBottom: 8, background: "rgba(255,255,255,.02)" }}>
       <div className="row" style={{ marginBottom: 6 }}>
@@ -22,6 +26,17 @@ export default function JobProgress({ job }: { job: Job }) {
           <span className="mono" style={{ fontSize: 11 }}>{job.progress}%</span>
         </div>
       </div>
+
+      {job.state === "succeeded" && (
+        <button
+          className="btn primary wide"
+          style={{ marginTop: 8, padding: "4px", fontSize: 11 }}
+          onClick={() => openWindow("results")}
+        >
+          View Results →
+        </button>
+      )}
+
       {job.error && (
         <div style={{ marginTop: 6, fontSize: 11, color: "var(--warn)", background: "rgba(239,68,68,.1)", padding: "4px 8px", borderRadius: 4 }}>
           Error: {job.error}

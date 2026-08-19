@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { PRESETS, useWindowStore, type WindowId } from "@/stores/window-store";
 import { useMapStore } from "@/stores/map-store";
 import { useScenarioStore } from "@/stores/scenario-store";
+import { useWorkflowStore } from "@/stores/workflow-store";
+import { WORKFLOWS, type WorkflowId } from "@/lib/workflows";
 import { mapBridge } from "@/cesium/map-bridge";
 
 type Group = { label: string; items: { id: WindowId; label: string; kbd?: string }[] };
@@ -38,6 +40,10 @@ const ChevronDownIcon = () => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="chevron-icon" suppressHydrationWarning><path d="m6 9 6 6 6-6"/></svg>
 );
 
+const WorkflowIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+);
+
 const GROUP_ICONS: Record<string, React.ReactNode> = {
   City: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg>,
   Scenario: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>,
@@ -55,9 +61,10 @@ const WorkspaceIcon = () => (
 
 export default function TopNavbar() {
   const [open, setOpen] = useState<string | null>(null);
-      const { openWindow, applyPreset, closeAll, autoArrangeWindows } = useWindowStore();
+  const { openWindow, applyPreset, closeAll, autoArrangeWindows } = useWindowStore();
   const { demo, ready } = useMapStore();
   const { scenarios, activeId, setActive } = useScenarioStore();
+  const { activeWorkflowId, startWorkflow } = useWorkflowStore();
 
   useEffect(() => {
     const close = () => setOpen(null);
@@ -70,6 +77,58 @@ export default function TopNavbar() {
   return (
     <div className="navbar" onClick={(e) => e.stopPropagation()} suppressHydrationWarning>
       <div className="brand"><span className="dot" />NAGAR-X</div>
+      <div className="nav-sep" />
+
+      {/* Primary Workflows Menu */}
+      <div style={{ position: "relative" }}>
+        <button
+          className={"navitem" + (open === "workflows" || activeWorkflowId ? " active" : "")}
+          style={{
+            background: activeWorkflowId ? "rgba(56,189,248,.25)" : undefined,
+            borderColor: "rgba(56,189,248,.4)",
+            borderStyle: "solid",
+            borderWidth: "1px"
+          }}
+          onClick={() => setOpen(open === "workflows" ? null : "workflows")}
+        >
+          <WorkflowIcon />
+          <span>Workflows</span>
+          <ChevronDownIcon />
+        </button>
+
+        {open === "workflows" && (
+          <div className="menu" style={{ minWidth: 260 }}>
+            <div className="sec">Planner Workflows</div>
+            {(Object.keys(WORKFLOWS) as WorkflowId[]).map((wfId) => {
+              const wf = WORKFLOWS[wfId];
+              const isCurrent = activeWorkflowId === wfId;
+              return (
+                <button
+                  key={wfId}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    color: isCurrent ? "var(--accent)" : undefined
+                  }}
+                  onClick={() => {
+                    startWorkflow(wfId);
+                    setOpen(null);
+                  }}
+                >
+                  <span style={{ fontSize: 13 }}>{wf.icon}</span>
+                  <div style={{ flex: 1, textAlign: "left" }}>
+                    <div style={{ fontWeight: isCurrent ? 700 : 500 }}>{wf.title}</div>
+                    <div className="muted" style={{ fontSize: 10 }}>{wf.badge}</div>
+                  </div>
+                  {isCurrent && <span className="chip info" style={{ fontSize: 9 }}>ACTIVE</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <div className="nav-sep" />
 
       {GROUPS.map((g) => (

@@ -5,6 +5,7 @@ import { mapBridge } from "@/cesium/map-bridge";
 import { useMapStore } from "@/stores/map-store";
 import { useScenarioStore } from "@/stores/scenario-store";
 import { Field, SectionTitle } from "@/components/ui/Bits";
+import NextAction from "@/components/workflow/NextAction";
 
 type Hazard = { id: string; label: string; defaultRadiusM: number; responderType: string };
 type Measure = {
@@ -435,6 +436,29 @@ export default function EmergencyPanel() {
                   ))}
                 </div>
               )}
+
+              <NextAction
+                title="RESILIENCE DECISION"
+                prompt="Disaster simulation complete. Save applied mitigation measures to your scenario or compare with baseline."
+                actionLabel="Save Mitigations to Scenario"
+                onAction={async () => {
+                  if (measures.length > 0) {
+                    const scStore = useScenarioStore.getState();
+                    for (const mId of measures) {
+                      const mSpec = cat.measures.find((x) => x.id === mId);
+                      await scStore.addChange({
+                        type: "facility",
+                        label: `Mitigation: ${mSpec?.label || mId}`,
+                        detail: `Applies to ${hazardType} · reduces impact by ${mSpec?.effect || 0}%`
+                      });
+                    }
+                  }
+                }}
+                targetWindow="changes"
+                secondaryActionLabel="Compare Scenarios"
+                secondaryTargetWindow="comparison"
+                variant="good"
+              />
             </>
           )}
         </>

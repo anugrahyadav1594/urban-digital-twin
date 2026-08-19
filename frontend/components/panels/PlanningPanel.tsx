@@ -9,6 +9,7 @@ import { useMapStore, type DrawMode } from "@/stores/map-store";
 import { useScenarioStore } from "@/stores/scenario-store";
 import { useWindowStore } from "@/stores/window-store";
 import { Field, SectionTitle } from "@/components/ui/Bits";
+import NextAction from "@/components/workflow/NextAction";
 import type { SuitabilityRequest, AnalysisResult } from "@/types";
 
 const TOOLS: { id: DrawMode; label: string }[] = [
@@ -195,6 +196,15 @@ export default function PlanningPanel() {
           )}
 
           <button className="btn primary wide" disabled={busy} onClick={findSites}>{busy ? "RUNNING…" : "FIND SITES"}</button>
+
+          <NextAction
+            title="PLANNING WORKFLOW"
+            prompt="Once candidate sites are generated, evaluate the ranked recommendations and inspect them in 3D."
+            actionLabel="Generate Candidate Sites"
+            onAction={findSites}
+            targetWindow="results"
+            disabled={busy}
+          />
         </>
       ) : tab === "road" ? (
         <>
@@ -213,12 +223,16 @@ export default function PlanningPanel() {
           </button>
 
           {analyzingRoad && (
-            <div className="muted" style={{ fontSize: 11, margin: "10px 0" }}>Running backend GIS spatial intersection analysis (POST /planning/road)…</div>
+            <div className="muted" style={{ fontSize: 11, margin: "10px 0" }}>Evaluating road impact and spatial intersections on backend…</div>
           )}
 
           {roadError && (
             <div style={{ padding: 10, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 6, margin: "10px 0", fontSize: 12, color: "var(--warn)" }}>
-              Road Analysis Error: {roadError}
+              <b>Road Analysis Warning:</b> {roadError}
+              <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
+                <button className="btn primary" style={{ fontSize: 10.5 }} onClick={() => setDrawMode("road")}>Redraw Alignment</button>
+                <button className="btn ghost" style={{ fontSize: 10.5 }} onClick={() => setRoadError(null)}>Dismiss</button>
+              </div>
             </div>
           )}
 
@@ -258,6 +272,30 @@ export default function PlanningPanel() {
                 </button>
                 <button className="btn ghost" onClick={() => { mapBridge.clearProposals(); useMapStore.getState().setDrawnPath([]); setRoadProposalResult(null); }}>Clear</button>
               </div>
+
+              <NextAction
+                title="ALIGNMENT DECISION"
+                prompt="Road proposal calculated. Add this arterial corridor to your working scenario basket."
+                actionLabel={`Add to ${activeScenario.name}`}
+                onAction={async () => {
+                  await addChange({
+                    type: "road",
+                    label: roadProposalResult.title,
+                    detail: `${road.lanes} lanes · ${road.speed} km/h`,
+                    parameters: {
+                      geometry: roadProposalResult.geometry,
+                      road_type: road.type,
+                      lanes: road.lanes,
+                      speed: road.speed,
+                      result_id: roadProposalResult.resultId
+                    }
+                  });
+                }}
+                targetWindow="changes"
+                secondaryActionLabel="Stress-Test Plan"
+                secondaryTargetWindow="emergency"
+                variant="good"
+              />
             </>
           )}
         </>
@@ -303,9 +341,30 @@ export default function PlanningPanel() {
           >
             {busy ? "OPTIMIZING…" : "RUN FACILITY OPTIMIZATION"}
           </button>
-          <div className="muted" style={{ fontSize: 10.5, marginTop: 8, textAlign: "center" }}>
-            POST /optimization/facility-location → MCDA candidate scoring & map highlight
-          </div>
+
+          <NextAction
+            title="OPTIMIZATION DECISION"
+            prompt="Run facility location optimization to find optimal locations serving the largest population."
+            actionLabel="Run Facility Optimization"
+            onAction={() => {
+              openWindow("jobs");
+              startJob(`${optFacility} location optimization`, "optimization", [
+                { key: "candidate", label: "Filtering candidate parcels", state: "pending" },
+                { key: "mcda", label: "Evaluating MCDA criteria", state: "pending" },
+                { key: "rank", label: "Ranking optimal facility locations", state: "pending" }
+              ], async () => {
+                const res = await api.optimizeFacilities(optFacility, optObjective, numFac);
+                if (res) {
+                  addResult(res);
+                  if (res.entities) mapBridge.showCandidates(res.entities);
+                  openWindow("analysis");
+                  openWindow("results");
+                }
+              });
+            }}
+            targetWindow="results"
+            disabled={busy}
+          />
         </>
       )}
     </div>

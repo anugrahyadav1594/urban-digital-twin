@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PRESETS, WINDOW_REGISTRY, useWindowStore, type WindowId } from "@/stores/window-store";
+import { useWorkflowStore } from "@/stores/workflow-store";
+import { WORKFLOWS, type WorkflowId } from "@/lib/workflows";
 import { mapBridge } from "@/cesium/map-bridge";
 import { PARCELS } from "@/lib/city-model";
 import { useSelectionStore } from "@/stores/selection-store";
@@ -13,6 +15,7 @@ export default function CommandPalette() {
   const [i, setI] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const { openWindow, applyPreset, closeAll } = useWindowStore();
+  const startWorkflow = useWorkflowStore((s) => s.startWorkflow);
   const select = useSelectionStore((s) => s.select);
 
   useEffect(() => {
@@ -29,11 +32,26 @@ export default function CommandPalette() {
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 10); }, [open]);
 
   const commands: Cmd[] = useMemo(() => {
-    const list: Cmd[] = (Object.keys(WINDOW_REGISTRY) as WindowId[]).map((id) => ({
-      label: "Open · " + WINDOW_REGISTRY[id].title,
-      hint: "window",
-      run: () => openWindow(id)
-    }));
+    const list: Cmd[] = [];
+
+    // Workflow commands first
+    (Object.keys(WORKFLOWS) as WorkflowId[]).forEach((wfId) => {
+      const wf = WORKFLOWS[wfId];
+      list.push({
+        label: `Workflow · ${wf.title} (${wf.badge})`,
+        hint: "workflow",
+        run: () => startWorkflow(wfId)
+      });
+    });
+
+    (Object.keys(WINDOW_REGISTRY) as WindowId[]).forEach((id) => {
+      list.push({
+        label: "Open · " + WINDOW_REGISTRY[id].title,
+        hint: "window",
+        run: () => openWindow(id)
+      });
+    });
+
     Object.keys(PRESETS).forEach((p) => list.push({ label: "Workspace · " + p, hint: "preset", run: () => applyPreset(p) }));
     list.push({ label: "Close all windows", hint: "layout", run: () => closeAll() });
     list.push({ label: "Shortest route home · City overview", hint: "camera", run: () => mapBridge.home() });
@@ -51,7 +69,7 @@ export default function CommandPalette() {
       );
     }
     return list;
-  }, [q, openWindow, applyPreset, closeAll, select]);
+  }, [q, openWindow, applyPreset, closeAll, select, startWorkflow]);
 
   const filtered = commands.filter((c) => c.label.toLowerCase().includes(q.toLowerCase())).slice(0, 12);
 

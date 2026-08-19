@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
 import { SectionTitle, Empty } from "@/components/ui/Bits";
 import { useScenarioStore } from "@/stores/scenario-store";
+import NextAction from "@/components/workflow/NextAction";
 import type { AnalysisResult, ComparedScenario } from "@/types";
 
 export default function ComparisonPanel() {
@@ -77,7 +78,7 @@ export default function ComparisonPanel() {
 
   return (
     <div>
-      <SectionTitle>Real Scenario Comparison</SectionTitle>
+      <SectionTitle>Scenario Trade-off Matrix</SectionTitle>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <div style={{ flex: 1 }}>
@@ -98,7 +99,7 @@ export default function ComparisonPanel() {
         </div>
       </div>
 
-      {loading && <Empty>Computing trade-off matrix on backend (POST /scenarios/compare)…</Empty>}
+      {loading && <Empty>Evaluating trade-off matrix on backend engine…</Empty>}
 
       {error && (
         <div style={{ padding: 10, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 6, marginBottom: 12, fontSize: 12, color: "var(--warn)" }}>
@@ -161,6 +162,19 @@ export default function ComparisonPanel() {
               {comparisonResult.explanation}
             </div>
           </div>
+
+          <NextAction
+            title="COMPARISON DECISION"
+            prompt={`Engine recommended "${bestScen?.name || "Scenario A"}". Make it active to carry forward or export decision record.`}
+            actionLabel={`Activate ${bestScen?.name || "Winning Plan"}`}
+            onAction={() => {
+              if (bestScen?.scenarioId) setActive(bestScen.scenarioId);
+            }}
+            targetWindow="results"
+            secondaryActionLabel="Explain Rationale"
+            secondaryTargetWindow="ai"
+            variant="good"
+          />
         </>
       )}
 

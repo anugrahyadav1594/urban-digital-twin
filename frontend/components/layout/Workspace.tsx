@@ -5,6 +5,7 @@ import TopNavbar from "./TopNavbar";
 import WindowManager from "./WindowManager";
 import Taskbar from "./Taskbar";
 import CommandPalette from "./CommandPalette";
+import WorkflowProgress from "@/components/workflow/WorkflowProgress";
 import { useWindowStore } from "@/stores/window-store";
 
 /* Cesium touches window/WebGL - never render it on the server. */
@@ -29,6 +30,7 @@ export default function Workspace() {
     <div className="workspace">
       <CesiumViewer />
       <TopNavbar />
+      <WorkflowProgress />
       <WindowManager />
       <Taskbar />
       <CommandPalette />

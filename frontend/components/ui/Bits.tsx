@@ -1,8 +1,8 @@
 "use client";
 import type { Metric } from "@/types";
 
-export function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <div className="sec-title">{children}</div>;
+export function SectionTitle({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return <div className="sec-title" style={style}>{children}</div>;
 }
 
 export function KV({ k, v }: { k: string; v: React.ReactNode }) {

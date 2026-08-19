@@ -6,6 +6,7 @@ import { useScenarioStore } from "@/stores/scenario-store";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { useWindowStore } from "@/stores/window-store";
 import { SectionTitle, MetricCards, Field } from "@/components/ui/Bits";
+import NextAction from "@/components/workflow/NextAction";
 import type { AnalysisResult } from "@/types";
 
 export default function SimulationPanel() {
@@ -138,9 +139,16 @@ export default function SimulationPanel() {
           <div style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.5 }} className="muted">
             {simResult.explanation}
           </div>
-          <button className="btn ghost wide" style={{ marginTop: 8 }} onClick={() => openWindow("results")}>
-            Open in Results Panel
-          </button>
+
+          <NextAction
+            title="SIMULATION NEXT STEP"
+            prompt="Simulation output generated. Evaluate resilience impact or compare with scenario baseline."
+            actionLabel="Stress-Test Emergency Response"
+            targetWindow="emergency"
+            secondaryActionLabel="Compare with Baseline"
+            secondaryTargetWindow="comparison"
+            variant="accent"
+          />
         </div>
       )}
     </div>
