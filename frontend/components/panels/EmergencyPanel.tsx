@@ -92,7 +92,7 @@ export default function EmergencyPanel() {
         turnoutSeconds: turnout, responseTargetSeconds: targetMin * 60,
         scenario_id: activeScenario?.id
       });
-      if (!out) { setErr("Backend unreachable or no route data returned."); setRoutes(null); return; }
+      if (!out) { setErr("No route data returned."); setRoutes(null); return; }
       const recs = out.records ?? [];
       setRoutes(recs);
       mapBridge.showHazard({ center: [lon, lat], label: "Incident" });
@@ -101,6 +101,7 @@ export default function EmergencyPanel() {
         responseTimeMin: r.response_time_min, isPrimary: r.is_primary,
         withinTarget: r.within_target
       })));
+      mapBridge.showNetworkImpact(null);
       if (out.warnings?.length) setErr(out.warnings.join(" "));
     } catch (e: any) {
       setErr(String(e?.message ?? e));
@@ -118,8 +119,12 @@ export default function EmergencyPanel() {
         includeRouting: true,
         scenario_id: activeScenario?.id
       });
-      if (!out) { setErr("Backend unreachable or simulation failed."); return; }
+      if (!out) { setErr("No simulation data returned."); return; }
       setSim(out);
+      // Exposure can succeed while response routing fails; say so rather than
+      // showing an empty dispatch table with no explanation.
+      if (out.response?.error) setErr(out.response.error);
+      else if (out.persist_error) setErr(`Result not saved: ${out.persist_error}`);
       mapBridge.showHazard({
         center: out.hazard.center, label: out.hazard.label,
         footprint: out.hazard.footprint,
@@ -136,6 +141,9 @@ export default function EmergencyPanel() {
       } else {
         mapBridge.showEmergencyRoutes([]);
       }
+      // Closed / slowed / reopened roads, so the disruption is visible on the
+      // globe rather than only as counts in the table.
+      mapBridge.showNetworkImpact(out.network ?? null);
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     } finally { setBusy(false); }
@@ -215,7 +223,7 @@ export default function EmergencyPanel() {
                 </div>
               ))}
               <div className="muted" style={{ fontSize: 10.5, marginTop: 6 }}>
-                Includes {turnout} turnout. Target {targetMin} minutes.
+                Includes {turnout}s turnout. Target {targetMin} min.
               </div>
             </>
           )}
@@ -343,6 +351,17 @@ export default function EmergencyPanel() {
         </>
       )}
 
+      {(routes || sim) && (
+        <div style={{ marginTop: 10, fontSize: 10, opacity: 0.75,
+                      display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <Key c="#00e5ff" t="fastest unit" />
+          <Key c="#7d8ea0" t="other units" />
+          {sim && <Key c="#ef4444" t="road closed" />}
+          {sim && <Key c="#fbbf24" t="road slowed" />}
+          {sim && <Key c="#22c55e" t="reopened by measure" />}
+        </div>
+      )}
+
       {err && (
         <div style={{ marginTop: 10, fontSize: 11, color: "var(--warn)" }}>{err}</div>
       )}
@@ -352,5 +371,15 @@ export default function EmergencyPanel() {
         CLEAR MAP
       </button>
     </div>
+  );
+}
+
+/** Map colour key. */
+function Key({ c, t }: { c: string; t: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span style={{ width: 14, height: 3, background: c, borderRadius: 2 }} />
+      {t}
+    </span>
   );
 }

@@ -3,8 +3,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+<<<<<<< HEAD
+from .routers import (agents, analysis, city, emergency, features, health,
+                      jobs, layers, optimization, planning, results, scenario,
+=======
 from .routers import (agents, analysis, city, emergency, features, health, jobs,
                       layers, optimization, planning, results, scenario,
+>>>>>>> 75f15e6ad521a3207cf21a1edd1816c5f5beb577
                       simulation)
 
 api_router = APIRouter()

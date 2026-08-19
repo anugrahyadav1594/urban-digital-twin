@@ -104,8 +104,12 @@ class EmergencyService:
         if stats:
             out.setdefault("network", {}).update(stats)
         if persist:
-            out["result_id"] = self.results.save(res, scenario_id)
-            self.s.commit()
+            try:
+                out["result_id"] = self.results.save(res, scenario_id)
+                self.s.commit()
+            except Exception as exc:                     # noqa: BLE001
+                self.s.rollback()
+                out["persist_error"] = f"{type(exc).__name__}: {exc}"
         return out
 
     # ------------------------------------------------------------------
@@ -177,15 +181,70 @@ class EmergencyService:
         }
 
         if include_routing:
-            out["response"] = self._response_impact(
-                base, mit, roads, lon, lat,
-                responder_type or spec["responder_type"],
-                response_target_seconds, scenario_id)
+            # Exposure numbers are the primary product; response routing is an
+            # add-on over a much larger graph. A failure there used to 500 the
+            # whole request and the panel reported "simulation failed" even
+            # though every exposure figure had already been computed.
+            try:
+                out["response"] = self._response_impact(
+                    base, mit, roads, lon, lat,
+                    responder_type or spec["responder_type"],
+                    response_target_seconds, scenario_id)
+            except Exception as exc:                     # noqa: BLE001
+                out["response"] = {
+                    "error": f"response routing failed: {type(exc).__name__}: {exc}",
+                    "responder_type": responder_type or spec["responder_type"],
+                }
+
+        # Blocked/slowed roads as map geometry, so the disruption is visible
+        # rather than just a count in a table.
+        out["network"] = self._network_impact_geometry(base, mit, roads)
 
         if persist:
-            out["result_id"] = self.results.save(mit, scenario_id)
-            self.s.commit()
+            # A results-table problem must not discard a completed simulation.
+            try:
+                out["result_id"] = self.results.save(mit, scenario_id)
+                self.s.commit()
+            except Exception as exc:                     # noqa: BLE001
+                self.s.rollback()
+                out["persist_error"] = f"{type(exc).__name__}: {exc}"
         return out
+
+    # ------------------------------------------------------------------
+    def _network_impact_geometry(
+        self, base: Any, mit: Any, roads: Sequence[Any],
+    ) -> dict[str, Any]:
+        """Blocked and slowed roads as lon/lat lines for the map."""
+        b_block, b_slow = self._blocked_from(base)
+        m_block, _ = self._blocked_from(mit)
+        by_id = {str(r.id): r for r in roads}
+        m_set = set(m_block)
+
+        def lines(ids: Sequence[str], limit: int = 400) -> list[list[list[float]]]:
+            out: list[list[list[float]]] = []
+            for rid in list(ids)[:limit]:
+                r = by_id.get(str(rid))
+                g = getattr(r, "geometry", None) if r is not None else None
+                if g is None or g.is_empty:
+                    continue
+                try:
+                    ls = to_storage(g, self.cfg.analysis_srid)
+                except Exception:                        # noqa: BLE001
+                    continue
+                if ls.geom_type == "LineString":
+                    out.append([[round(x, 6), round(y, 6)] for x, y in ls.coords])
+            return out
+
+        return {
+            "blocked_count": len(b_block),
+            "slowed_count": len(b_slow),
+            # Roads a mitigation measure reopens - the visible payoff of
+            # road_redundancy.
+            "reopened_count": len([i for i in b_block if i not in m_set]),
+            "blocked": lines(b_block),
+            "slowed": lines(b_slow),
+            "reopened": lines([i for i in b_block if i not in m_set]),
+        }
 
     # ------------------------------------------------------------------
     def _footprint_lonlat(self, hazard: Any) -> dict[str, Any] | None:
@@ -226,7 +285,7 @@ class EmergencyService:
         b_block, b_slow = self._blocked_from(base)
         m_block, m_slow = self._blocked_from(mit)
         Gb, _ = degrade_graph(G, blocked_road_ids=b_block, slowed_road_ids=b_slow)
-        Gm, _ = degrade_graph(G, blockedm_block, slowed_road_ids=m_slow)
+        Gm, _ = degrade_graph(G, blocked_road_ids=m_block, slowed_road_ids=m_slow)
 
         normal = route_to_incident(G, incident, stations, prov, top_n=1,
                                    response_target_seconds=target_s)

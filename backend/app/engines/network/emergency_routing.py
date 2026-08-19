@@ -19,7 +19,8 @@ from typing import Any, Iterable, Sequence
 import networkx as nx
 
 from ..contracts import EngineResult, Provenance
-from .routing import nearest_node, shortest_path
+from .routing import (nearest_node, nearest_node_in, routable_core,
+                      shortest_path)
 
 ALGORITHM = "network.emergency_routing"
 ALGORITHM_VERSION = "0.1.0"
@@ -27,6 +28,10 @@ ALGORITHM_VERSION = "0.1.0"
 # Seconds lost before a vehicle is moving. Response time that ignores this
 # reads far better than reality; every fire service plans around it.
 DEFAULT_TURNOUT_SECONDS = 60.0
+
+# Beyond this, a snap is far enough that the user should be told the incident
+# was off the routable network rather than silently moved.
+OFF_NETWORK_WARN_M = 150.0
 
 
 def degrade_graph(
@@ -105,38 +110,35 @@ def route_to_incident(
         res.records = []
         return res
 
-    target = nearest_node(G, incident_point)
+    # Snap both ends to the largest mutually-reachable set of nodes.
+    #
+    # Real road data is never a single clean component: OSM service spurs,
+    # driveways and segments whose endpoints missed each other after
+    # reprojection leave hundreds of small islands. Snapping to the nearest
+    # node full stop puts a station on one of those islands, and then every
+    # shortest_path from it fails and the panel says the incident is cut off
+    # while the city network is entirely intact.
+    core = routable_core(G)
+    if not core:
+        res.warnings.append("no road network available; cannot route")
+        res.records = []
+        return res
+
+    target, snap_m = nearest_node_in(G, incident_point, core)
     if target is None:
         res.warnings.append("incident could not be snapped to the road network")
         res.records = []
         return res
 
-    # When the hazard closes the roads at the incident itself, the nearest node
-    # is isolated and every route reports "unreachable" — which is misleading.
-    # Real dispatch stages at the edge of the hazard and crews approach on
-    # foot, so fall back to the closest node that still has connectivity and
-    # report the staging distance honestly.
-    staged_from_m = 0.0
-    if G.in_degree(target) == 0 and G.out_degree(target) == 0:
-        px, py = incident_point.x, incident_point.y
-        best, best_d = None, float("inf")
-        for n in G.nodes:
-            if G.in_degree(n) == 0 and G.out_degree(n) == 0:
-                continue
-            d = (n[0] - px) ** 2 + (n[1] - py) ** 2
-            if d < best_d:
-                best, best_d = n, d
-        if best is None:
-            res.warnings.append(
-                "the entire road network is severed; no unit can be staged")
-            res.records = []
-            return res
-        target = best
-        staged_from_m = round(best_d ** 0.5, 1)
-        res.add("staging_distance_m", staged_from_m, "m")
+    # How far the incident sits from a routable road. Large values mean the
+    # click was off-network, which the caller should surface rather than hide.
+    staged_from_m = round(snap_m, 1)
+    if staged_from_m > 0.0:
+        res.add("incident_snap_distance_m", staged_from_m, "m")
+    if staged_from_m > OFF_NETWORK_WARN_M:
         res.warnings.append(
-            f"roads at the incident are impassable; units stage {staged_from_m:.0f} m "
-            "away and approach on foot")
+            f"the incident is {staged_from_m:.0f} m from the nearest routable "
+            "road; units stage there and approach on foot")
 
     rows: list[dict[str, Any]] = []
     unreachable = 0
@@ -144,7 +146,8 @@ def route_to_incident(
         geom = getattr(st, "geometry", None)
         if geom is None:
             continue
-        src = nearest_node(G, geom.centroid if hasattr(geom, "centroid") else geom)
+        src, src_snap = nearest_node_in(
+            G, geom.centroid if hasattr(geom, "centroid") else geom, core)
         if src is None:
             continue
         found = shortest_path(G, src, target, weight="time")
@@ -159,6 +162,7 @@ def route_to_incident(
         total = float(drive) + float(turnout_seconds)
         rows.append({
             "staging_distance_m": staged_from_m,
+            "station_snap_distance_m": round(src_snap, 1),
             "station_id": str(getattr(st, "id", "")),
             "station_name": getattr(st, "name", None) or f"Station {getattr(st, 'id', '')}",
             "station_type": getattr(st, "type", None),
@@ -234,7 +238,7 @@ def compare_routes(
     ) if r]
 
     if b:
-        res.add("baseline_response_s", b["response_time_s"], "seconds")
+        res.add("baseline_response_s", b["response_s"], "seconds")
     if a:
         res.add("degraded_response_s", a["response_time_s"], "seconds")
     if b and a:

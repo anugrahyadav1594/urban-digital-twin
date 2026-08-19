@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { CITY_CENTER, ION_TOKEN } from "@/lib/constants";
 import { FACILITIES, FLOOD_ZONE, PARCELS, ROADS, ZONE_COLOR } from "@/lib/city-model";
 import { loadAllLive } from "./liveData";
+import { api } from "@/lib/api/client";
 import { mapBridge } from "./map-bridge";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
@@ -143,6 +144,10 @@ export default function CesiumViewer() {
   const autoSpinRef = useRef(false);
   const [viewMode, setViewMode] = useState<"perspective" | "topDown">("perspective");
   const activeViewModeRef = useRef<"perspective" | "topDown">("perspective");
+  /* Real camera target. Seeded from CITY_CENTER (a static guess) and replaced
+     with the true data centroid as soon as GET /city reports the extent, so
+     "Home" always returns to the city that is actually in the database. */
+  const homeTargetRef = useRef({ lon: CITY_CENTER.lon, lat: CITY_CENTER.lat });
   const [isOrbitView, setIsOrbitView] = useState(false);
   const isOrbitViewRef = useRef(false);
   const { setReady, setError, setCameraText } = useMapStore();
@@ -209,9 +214,13 @@ export default function CesiumViewer() {
         });
         const waterImageryLayer = viewer.imageryLayers.addImageryProvider(waterImageryProvider);
 
-        // Load Indian Inter-State Boundaries ONLY (visible from country-wide zoom extent down to city level)
+        // Load Indian Inter-State Boundaries ONLY (visible from country-wide
+        // zoom extent down to city level). This overlay is purely decorative
+        // and public/data/india-states.json is not shipped, so probe first and
+        // skip quietly rather than logging a 404 on every mount.
         const stateBoundaries = await fetch("/data/india-states.json", { method: "HEAD" })
-          .then((r) => r.ok).catch(() => false);
+          .then((r) => r.ok)
+          .catch(() => false);
         if (stateBoundaries) Cesium.GeoJsonDataSource.load("/data/india-states.json", {
           stroke: Cesium.Color.fromCssColorString("#cbd5e1").withAlpha(0.85),
           strokeWidth: 2.0,
@@ -320,7 +329,7 @@ export default function CesiumViewer() {
         /* ── data sources, one per logical layer ─────────────── */
         const ds: Record<string, any> = {};
         const currentLayers = useLayerStore.getState().layers;
-        for (const key of ["buildings", "parcels", "roads", "highways", "landuse", "population", "water", "flood", "facilities", "candidates", "proposals"]) {
+        for (const key of ["buildings", "parcels", "roads", "highways", "landuse", "population", "water", "flood", "facilities", "candidates", "proposals", "emergency"]) {
           ds[key] = new Cesium.CustomDataSource(key);
           const found = currentLayers.find((l) => l.id === key);
           if (found) ds[key].show = found.visible;
@@ -506,6 +515,18 @@ export default function CesiumViewer() {
             }
           }
 
+          // Record every map click in lon/lat so location-driven panels
+          // (e.g. Emergency Response) can use the map as a coordinate picker.
+          const clickRay = viewer.camera.getPickRay(click.position);
+          const groundPt = clickRay ? viewer.scene.globe.pick(clickRay, viewer.scene) : undefined;
+          if (groundPt) {
+            const cg = Cesium.Cartographic.fromCartesian(groundPt);
+            useMapStore.getState().setLastClick({
+              lon: Cesium.Math.toDegrees(cg.longitude),
+              lat: Cesium.Math.toDegrees(cg.latitude)
+            });
+          }
+
           const picked = viewer.scene.pick(click.position);
           const id = picked?.id?.id as string | undefined;
           if (!id) { select(null); clearHighlight(); return; }
@@ -562,7 +583,7 @@ export default function CesiumViewer() {
 
         /* Get map location under the screen center */
         const getCenterLocation = () => {
-          if (!viewer || !Cesium) return { lon: CITY_CENTER.lon, lat: CITY_CENTER.lat };
+          if (!viewer || !Cesium) return { ...homeTargetRef.current };
           const centerPixel = new Cesium.Cartesian2(
             viewer.canvas.clientWidth / 2,
             viewer.canvas.clientHeight / 2
@@ -585,8 +606,8 @@ export default function CesiumViewer() {
 
         /* shortest route navigation with customizable orientation */
         const flyHomeShortestRoute = (
-          targetLon = CITY_CENTER.lon,
-          targetLat = CITY_CENTER.lat - 0.035,
+          targetLon = homeTargetRef.current.lon,
+          targetLat = homeTargetRef.current.lat - 0.035,
           targetAlt = 3600,
           orientation: { heading?: number; pitch?: number; roll?: number } = {}
         ) => {
@@ -627,14 +648,15 @@ export default function CesiumViewer() {
         };
 
         const home = () => {
+          const hc = homeTargetRef.current;
           if (activeViewModeRef.current === "topDown") {
-            flyHomeShortestRoute(CITY_CENTER.lon, CITY_CENTER.lat, 6500, {
+            flyHomeShortestRoute(hc.lon, hc.lat, 6500, {
               heading: 0,
               pitch: Cesium.Math.toRadians(-90),
               roll: 0
             });
           } else {
-            flyHomeShortestRoute(CITY_CENTER.lon, CITY_CENTER.lat - 0.035, 3600, {
+            flyHomeShortestRoute(hc.lon, hc.lat - 0.035, 3600, {
               heading: 0,
               pitch: Cesium.Math.toRadians(-38),
               roll: 0
@@ -832,6 +854,130 @@ export default function CesiumViewer() {
             });
             if (entities[0]) mapBridge.flyTo(entities[0].entityId);
           },
+          showEmergencyRoutes: (routes: any[]) => {
+            // Remove only route lines; the hazard polygon lives in the same
+            // data source and must survive a route refresh.
+            ds.emergency.entities.values
+              .filter((e: any) => String(e.id).startsWith("route-"))
+              .forEach((e: any) => ds.emergency.entities.remove(e));
+            (routes || []).forEach((r, i) => {
+              const pts: number[] = [];
+              (r.path || []).forEach((c: number[]) => { pts.push(c[0], c[1]); });
+              if (pts.length < 4) return;
+              const primary = r.isPrimary ?? i === 0;
+              ds.emergency.entities.add({
+                id: `route-${r.stationId ?? i}`,
+                name: `${r.stationName ?? "Unit"} — ${r.responseTimeMin ?? "?"} min`,
+                polyline: {
+                  positions: Cesium.Cartesian3.fromDegreesArray(pts),
+                  width: primary ? 8 : 4,
+                  clampToGround: true,
+                  material: primary
+                    ? new Cesium.PolylineGlowMaterialProperty({
+                        color: C(r.withinTarget === false ? "#ff5252" : "#00e5ff", 0.95),
+                        glowPower: 0.28
+                      })
+                    : C("#7d8ea0", 0.6)
+                }
+              });
+            });
+            // Frame what was just drawn. Without this the routes render
+            // correctly but off-screen, which reads as "nothing happened".
+            const drawn = ds.emergency.entities.values
+              .filter((e: any) => String(e.id).startsWith("route-"));
+            if (drawn.length) {
+              viewer.flyTo(drawn, {
+                duration: 1.4,
+                offset: new Cesium.HeadingPitchRange(
+                  0, Cesium.Math.toRadians(-50), 0)
+              }).catch(() => { /* superseded by another camera move */ });
+            }
+          },
+          showNetworkImpact: (impact: any) => {
+            // Blocked/slowed/reopened roads share the emergency data source but
+            // carry their own id prefix so a route refresh does not erase them.
+            ds.emergency.entities.values
+              .filter((e: any) => String(e.id).startsWith("netimp-"))
+              .forEach((e: any) => ds.emergency.entities.remove(e));
+            if (!impact) return;
+            const draw = (lines: number[][][] | undefined, kind: string,
+                          colour: string, width: number, alpha: number) => {
+              (lines || []).forEach((line, i) => {
+                const pts: number[] = [];
+                (line || []).forEach((c: number[]) => { pts.push(c[0], c[1]); });
+                if (pts.length < 4) return;
+                ds.emergency.entities.add({
+                  id: `netimp-${kind}-${i}`,
+                  name: kind === "blocked" ? "Road closed by hazard"
+                      : kind === "slowed" ? "Road slowed by hazard"
+                      : "Road kept open by mitigation",
+                  polyline: {
+                    positions: Cesium.Cartesian3.fromDegreesArray(pts),
+                    width, clampToGround: true, material: C(colour, alpha)
+                  }
+                });
+              });
+            };
+            draw(impact.slowed, "slowed", "#fbbf24", 5, 0.75);
+            draw(impact.blocked, "blocked", "#ef4444", 6, 0.9);
+            draw(impact.reopened, "reopened", "#22c55e", 6, 0.95);
+          },
+          showHazard: (h: any) => {
+            ds.emergency.entities.values
+              .filter((e: any) => String(e.id).startsWith("hazard-"))
+              .forEach((e: any) => ds.emergency.entities.remove(e));
+            if (!h) return;
+            const ring = (g: any) => {
+              const out: number[] = [];
+              (g?.coordinates?.[0] || []).forEach((c: number[]) => { out.push(c[0], c[1]); });
+              return out;
+            };
+            const base = ring(h.footprint);
+            if (base.length >= 6) {
+              ds.emergency.entities.add({
+                id: "hazard-extent",
+                name: `${h.label ?? "Hazard"} extent`,
+                polygon: {
+                  hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(base)),
+                  material: C("#ff6b3d", 0.22),
+                  outline: true,
+                  outlineColor: C("#ff6b3d", 0.9),
+                  classificationType: Cesium.ClassificationType.TERRAIN
+                }
+              });
+            }
+            const mit = ring(h.footprintMitigated);
+            if (mit.length >= 6) {
+              ds.emergency.entities.add({
+                id: "hazard-mitigated",
+                name: "Extent with measures",
+                polygon: {
+                  hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(mit)),
+                  material: C("#39d98a", 0.20),
+                  outline: true,
+                  outlineColor: C("#39d98a", 0.95),
+                  classificationType: Cesium.ClassificationType.TERRAIN
+                }
+              });
+            }
+            if (h.center) {
+              ds.emergency.entities.add({
+                id: "hazard-origin",
+                position: Cesium.Cartesian3.fromDegrees(h.center[0], h.center[1], 30),
+                point: { pixelSize: 14, color: C("#ff2d2d", 1), outlineColor: C("#ffffff", 0.9), outlineWidth: 2 },
+                label: {
+                  text: h.label ?? "Incident",
+                  font: "600 12px Inter, sans-serif",
+                  fillColor: C("#ffffff", 1),
+                  showBackground: true,
+                  backgroundColor: C("#c0392b", 0.85),
+                  pixelOffset: new Cesium.Cartesian2(0, -26),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY
+                }
+              });
+            }
+          },
+          clearEmergency: () => ds.emergency.entities.removeAll(),  // routes, hazard and network impact all live here
           clearCandidates: () => ds.candidates.entities.removeAll(),
           clearProposals: () => ds.proposals.entities.removeAll(),
           setDrawMode: () => { },
@@ -850,14 +996,26 @@ export default function CesiumViewer() {
         });
 
         // initial layer visibility from the store
-        /* Replace the procedural city with real PostGIS geometry. The
-           synthetic entities above remain the offline fallback. */
+        /* ── swap the procedural city for real PostGIS geometry ──
+           The synthetic entities above are the offline fallback. If the
+           backend answers, every live layer is cleared and redrawn from the
+           database, and the layer panel counts are updated to match what is
+           actually on the globe. */
         try {
           const drawn = await loadAllLive(Cesium, ds);
           const total = Object.values(drawn).reduce((a, b) => a + b, 0);
           if (total > 0) {
+            // Counts in the layer panel come from GET /layers (true DB totals);
+            // `drawn` may be lower because of the render caps, so it is logged
+            // for diagnostics rather than written back over the real numbers.
             console.info("[cesium] live data drawn", drawn);
-            (window as any).__nagarx = { viewer, dataSources: ds, liveCounts: drawn };
+            // Diagnostics handle: lets `window.__nagarx.liveCounts` and the
+            // viewer be inspected from the console / e2e tests.
+            (window as any).__nagarx = {
+              viewer,
+              dataSources: ds,
+              liveCounts: drawn
+            };
           } else {
             console.warn("[cesium] backend returned no geometry - keeping demo city");
           }
@@ -867,8 +1025,31 @@ export default function CesiumViewer() {
 
         useLayerStore.getState().layers.forEach((l) => { if (ds[l.id]) ds[l.id].show = l.visible; });
 
+        /* ── point "Home" at the real data ──
+           GET /city returns `center`, computed by the backend from the union
+           extent of roads+parcels+buildings. Trust it over the compiled-in
+           constant: if the ETL bbox moves, or a different area is ingested,
+           the camera follows the data instead of a stale literal. Guarded so
+           a demo-mode / offline response cannot fling the camera to null
+           island. */
+        try {
+          const info: any = await api.getCity();
+          const c = info?.center;
+          const lon = Number(c?.lon), lat = Number(c?.lat);
+          if (Number.isFinite(lon) && Number.isFinite(lat) &&
+              Math.abs(lon) <= 180 && Math.abs(lat) <= 90 &&
+              !(Math.abs(lon) < 0.001 && Math.abs(lat) < 0.001)) {
+            homeTargetRef.current = { lon, lat };
+            console.info("[cesium] home target from /city:", lon.toFixed(5), lat.toFixed(5),
+                         info?.name ?? "");
+          }
+        } catch {
+          console.warn("[cesium] /city unavailable - using CITY_CENTER fallback");
+        }
+
+        const hc0 = homeTargetRef.current;
         viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(CITY_CENTER.lon, CITY_CENTER.lat - 0.09, 9000),
+          destination: Cesium.Cartesian3.fromDegrees(hc0.lon, hc0.lat - 0.09, 9000),
           orientation: { heading: 0, pitch: Cesium.Math.toRadians(-35), roll: 0 }
         });
         setTimeout(home, 400);

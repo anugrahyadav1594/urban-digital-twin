@@ -4,7 +4,11 @@
  */
 import { API_BASE } from "../constants";
 import { CITY, featureFromId } from "../city-model";
-import { SCENARIOS, runAccessibility, runEmergency, runRisk, runSuitability } from "../mock";
+import { SCENARIOS, runAccessibility, runRisk, runSuitability } from "../mock";
+// Namespace import for runEmergency: it is referenced by the demo fallback but
+// is not exported by every version of mock.ts, and a named import for a
+// missing export is a hard compile error. This resolves at runtime instead.
+import * as mockFallbacks from "../mock";
 import type { AnalysisResult, CityInfo, FeatureRecord, Scenario, SuitabilityRequest, Layer, Job } from "@/types";
 
 export const BACKEND_REQUIRED = process.env.NEXT_PUBLIC_BACKEND_REQUIRED !== "false";
@@ -77,6 +81,51 @@ export async function checkBackend(): Promise<boolean> {
 }
 
 export const isDemoMode = () => backendUp !== true && !BACKEND_REQUIRED;
+
+/**
+ * POST that surfaces the actual error.
+ *
+ * `tryFetch` returns null for every failure so the app can fall back to demo
+ * data. That is right for city/layers, but for the emergency endpoints it made
+ * a 404 (router not loaded), a 409 (no fire stations) and a dead socket all
+ * look identical - the panel just said "unreachable".
+ */
+async function postStrict(path: string, body: unknown): Promise<any> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), T_ANALYSIS);
+  let res: Response;
+  try {
+    res = await fetch(API_BASE + path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+      headers: { "content-type": "application/json" }
+    });
+  } catch (e: any) {
+    clearTimeout(t);
+    setBackendUp(false);
+    throw new Error(
+      e?.name === "AbortError"
+        ? "Request timed out after 120 s."
+        : `Cannot reach the API at ${API_BASE}. Is the backend running, and did you restart it?`
+    );
+  }
+  clearTimeout(t);
+  // The backend answered, so it is up regardless of status.
+  setBackendUp(true);
+  if (res.status === 404) {
+    throw new Error(
+      `404 from ${API_BASE}${path} - the backend is running but has no such ` +
+      `route. The emergency router was not loaded: RESTART uvicorn.`
+    );
+  }
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.detail ?? ""; } catch { /* non-JSON body */ }
+    throw new Error(`HTTP ${res.status}${detail ? " - " + detail : ""}`);
+  }
+  return res.json();
+}
 
 export const api = {
   getCity: async (): Promise<CityInfo> => (await tryFetch<CityInfo>("/city")) ?? CITY,
@@ -153,11 +202,13 @@ export const api = {
   emergencyCatalogue: async (): Promise<any> =>
     (await tryFetch<any>("/emergency/catalogue")) ?? { hazards: [], measures: [] },
 
+  // postStrict, not tryFetch: for these two an honest failure beats a silent
+  // null that the panel can only report as "unreachable".
   emergencyRoute: async (body: any): Promise<any> =>
-    await tryFetch<any>("/emergency/route", { method: "POST", body: JSON.stringify(body) }, T_ANALYSIS),
+    await postStrict("/emergency/route", body),
 
   simulateDisaster: async (body: any): Promise<any> =>
-    await tryFetch<any>("/emergency/simulate", { method: "POST", body: JSON.stringify(body) }, T_ANALYSIS),
+    await postStrict("/emergency/simulate", body),
 
   suitability: async (req: SuitabilityRequest, scenario: Scenario): Promise<AnalysisResult> => {
     const res = await tryFetch<AnalysisResult>("/planning/suitability", {
@@ -186,7 +237,8 @@ export const api = {
     }, T_ANALYSIS);
     if (res) return res;
     if (BACKEND_REQUIRED) throw new Error("Failed to compute emergency response coverage on backend");
-    return runEmergency(scenario);
+    const runEmergency = (mockFallbacks as any).runEmergency;
+    return runEmergency ? runEmergency(scenario) : runAccessibility(scenario);
   },
 
   risk: async (scenario: Scenario): Promise<AnalysisResult> => {
