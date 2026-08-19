@@ -834,9 +834,7 @@ Use environment files for local configuration and secrets.
 
 ## License
 
-No license file is currently present in the repository.
-
-Until a license is added, the repository should **not** be assumed to grant broad reuse, modification, or redistribution rights.
+This project is licensed under the [MIT License](LICENSE).
 
 ---
 
