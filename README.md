@@ -1,863 +1,225 @@
-# NAGAR-X — Urban Digital Twin
+# HH Goa 2026 — Voice-Enabled RAG Pipeline
 
-An AI-assisted urban planning and geospatial decision-support platform that combines a **CesiumJS 3D digital-twin workspace**, **FastAPI planning API**, **PostGIS geospatial storage**, real **OpenStreetMap ingestion**, and a **multi-agent AI planning workflow** for evaluating urban infrastructure scenarios.
+[![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](LICENSE)
+[![Task](https://img.shields.io/badge/HH_Goa-Task_%232-blue.svg)](https://hhgoa.com)
+[![STT](https://img.shields.io/badge/STT-ElevenLabs_Scribe_v2-purple.svg)](https://elevenlabs.io)
+[![Dataset](https://img.shields.io/badge/Dataset-ai4bharat%2FMSMARCO--XI_(344_passages)-orange.svg)](https://huggingface.co/datasets/ai4bharat/MSMARCO-XI)
+[![Fast path](https://img.shields.io/badge/Fast_path-P50_1.51ms_·_P100_11.18ms_%3C_50ms-brightgreen.svg)](#latency-task-req-3--4)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://www.python.org)
 
-> **Project Status:** Active Development
+Voice in → transcript → **cited extractive answer in under 50ms** → optional Groq polish.
+Built for **Hacker House Goa 2026, Task #2**.
 
----
-
-## Overview
-
-NAGAR-X transforms urban-planning requirements into structured, data-backed planning workflows.
-
-The platform combines:
-
-- **3D city visualization** using CesiumJS
-- **Interactive planning tools** through a floating-window workspace
-- **Geospatial analysis** powered by PostgreSQL/PostGIS
-- **OpenStreetMap data ingestion**
-- **AI-assisted planning and decision support**
-- **Deterministic spatial and quantitative analysis**
-- **Scenario, risk, cost, and site-suitability evaluation**
-- **Automated planning report generation**
-
-The project is structured as a full-stack urban digital-twin platform with dedicated frontend, backend, database, ETL, AI, and infrastructure layers.
+The extractive answer is computed **before** generation and never depends on it.
+That is the number the 50ms budget is measured against.
 
 ---
 
-## Core Capabilities
+## Requirements → where they live
 
-### 3D Urban Digital Twin
-
-The frontend provides a full-viewport CesiumJS 3D environment for visualizing and interacting with the urban model.
-
-Features include:
-
-- 3D geographic visualization
-- City and infrastructure layers
-- Camera navigation
-- True-north alignment
-- Spatial selection
-- Collision detection
-- Map controls
-- Geographic overlays
-- Dynamic layer visibility
-
-### Floating Planning Workspace
-
-NAGAR-X uses a desktop-style interface rather than a traditional fixed sidebar.
-
-The workspace includes:
-
-- Horizontal command navbar
-- Floating tool windows
-- Draggable panels
-- Resizable panels
-- Window snapping
-- Window maximizing/restoring
-- Automatic window alignment
-- Workspace presets
-- Taskbar
-- Command palette
-
-Major workspace areas include:
-
-- City
-- Layers
-- Planning
-- Analysis
-- Scenario
-- Simulation
-- Compare
-- AI
-- Workspace
-
-### Geospatial Data Pipeline
-
-The ETL layer processes real OpenStreetMap data using:
-
-- GeoPandas
-- Shapely
-- PyProj
-- OSMnx
-- Pandas
-- SQLAlchemy
-
-Supported urban layers include:
-
-- Roads
-- Buildings
-- Facilities
-- Water bodies
-- Land parcels
-- Population zones
-
-The ingestion pipeline is designed to report failed data retrieval instead of silently replacing real-world data with fabricated records.
-
-### AI Planning Orchestration
-
-The backend contains a multi-agent planning workflow coordinated through an `Orchestrator`.
-
-The workflow includes:
-
-1. Planning intent extraction
-2. Spatial analysis
-3. GIS interpretation
-4. Cost analysis
-5. Risk assessment
-6. Critic validation
-7. Report generation
-
-The system combines AI interpretation with deterministic analytical tools for reliable quantitative outputs.
+| # | Requirement | What we ship |
+|---|---|---|
+| 1 | STT (Sarvam **or** ElevenLabs) | ElevenLabs `scribe_v2` (`stt/engine.py`). Sarvam is optional, off by default. |
+| 2 | Chunking must be vast | Three strategies, swappable (`chunking/strategies.py`). Indexed subset: **344 MSMARCO-XI passages**, not the full 100M-passage corpus. |
+| 3 | Chunking + retrieval + **final output &lt; 50ms** | Two-tier: extractive span is the final local output. **P50 1.51ms / P100 11.18ms.** |
+| 4 | P50 / P70 / P100 on many queries | `python -m app.benchmark` and `GET /api/benchmark?n=80` |
+| 5 | Harness | Typed `BaseStep` / `StepResult`, retries, structured I/O (`harness/`) |
+| 6 | Know when not to answer | Layers 1–3 refuse before generation. Layers 4–5 reject a bad polish and **keep the extractive span**. |
 
 ---
 
 ## Architecture
 
-```text
-                         ┌──────────────────────────┐
-                         │        User / Planner    │
-                         └────────────┬─────────────┘
-                                      │
-                                      ▼
-                 ┌────────────────────────────────────────┐
-                 │      Next.js + React + CesiumJS        │
-                 │                                        │
-                 │  3D Twin • Navbar • Floating Windows   │
-                 │  Layers • Planning • Analysis • AI     │
-                 └────────────────────┬───────────────────┘
-                                      │ HTTP / REST
-                                      ▼
-                 ┌────────────────────────────────────────┐
-                 │             FastAPI Backend            │
-                 │                                        │
-                 │ API v1 • Storage • Planning Workflow   │
-                 │ AI Agents • Deterministic Tooling      │
-                 └───────────────┬────────────────────────┘
-                                 │
-             ┌───────────────────┼────────────────────┐
-             │                   │                    │
-             ▼                   ▼                    ▼
-      ┌─────────────┐     ┌──────────────┐     ┌───────────────┐
-      │   PostGIS   │     │ AI / Agents  │     │ OSM / ETL     │
-      │ City Model  │     │ Orchestrator │     │ Geo Ingestion │
-      └─────────────┘     └──────────────┘     └───────────────┘
+```
+Voice ──► ElevenLabs STT          ← outside the 50ms window (~0.9–1.9s)
+              │
+              ▼
+     ┌─ 50ms BUDGET ─────────────────────────────────────┐
+     │  intent guard (L1)                                 │
+     │  TF-IDF retrieve                                   │
+     │  grounding gate (L2–L3)                            │
+     │  extractive span + support                         │
+     │           ▼                                        │
+     │     FAST ANSWER     P50 1.51ms                     │
+     └────────────────────────────────────────────────────┘
+              │
+              ▼
+     Groq polish (optional)       ← outside the budget (~0.7–2s)
+     L4 numeric/lexical check
+     L5 hedge check
+           │
+           ├── polish passes  → show generated
+           └── polish fails   → keep extractive
+```
+
+`POST /ask` `{ "question", "generate": false }` is the measured path.
+`generate: true` may replace the span. It cannot delete it.
+
+---
+
+## Latency (Task req #3 / #4)
+
+**Window:** transcript → extractive answer  
+(`retrieve + guardrail + extract`, `generate=false`).  
+STT and Groq are reported separately and are **not** inside the 50ms target.
+
+Two measurements, same code path:
+
+| Source | n | P50 | P70 | P100 | Under 50ms |
+|---|---:|---:|---:|---:|---:|
+| CLI `python benchmarks/fastpath.py --n 80` | 80 | 1.53 ms | 2.05 ms | 7.26 ms | 80/80 |
+| **Live process `GET /api/benchmark?n=80`** ← publish this | 80 | **1.51 ms** | **1.83 ms** | **11.18 ms** | **80/80** |
+
+Stage breakdown (CLI run, n=80, 8 warmup discarded, machine `shikhar-ubuntu`):
+
+| Stage | P50 | P70 | P100 |
+|---|---:|---:|---:|
+| Retrieval | 0.37 ms | 0.43 ms | 2.95 ms |
+| Guardrail | 0.02 ms | 0.02 ms | 7.11 ms |
+| Extract | 1.02 ms | 1.15 ms | 3.70 ms |
+| **Fast path** | **1.53 ms** | **2.05 ms** | **7.26 ms** |
+| LLM | 0 (not called) | — | — |
+
+Answer sources on that run: **74 extractive, 6 Layer-3 OOD refusals** (cake / Shor / Apple / World Cup / fusion).
+
+Reproduce:
+
+```bash
+python -m app.benchmark
+python benchmarks/fastpath.py --n 80
+curl -s "http://127.0.0.1:8000/api/benchmark?n=80"
+```
+
+Do **not** use `python -m benchmarks.run_benchmarks` for the 50ms claim. That script calls Groq and is outside the official window.
+
+STT + Groq, for honesty, sit in a different table (audio n=7, real ElevenLabs):
+
+| Stage | P50 | P100 |
+|---|---:|---:|
+| ElevenLabs STT | ~1.13 s | ~1.94 s |
+| Groq polish | ~1.05 s | ~5.7 s |
+| Fast path (same process) | 2.97 ms | 4.24 ms |
+
+---
+
+## Chunking (Task req #2)
+
+MSMARCO-XI rows are **queries**, each carrying ~10 passages. We indexed a **30-query validation slice → 344 passages** (Hindi + Bengali shards interleaved). Calling this “the complete dataset” would be false; the full train set is hundreds of thousands of queries per language.
+
+Three strategies, same 344-passage text, query-time index uses `recursive_sentence`:
+
+| Strategy | Chunks | Avg length | Boundary |
+|---|---:|---:|---|
+| `fixed_window` | 406 | 299 chars | 300-char window, 60-char overlap |
+| `recursive_sentence` ← served | 306 | 316 chars | sentence terminators, 60-word pack |
+| `semantic_paragraph` | 344 | 281 chars | `\n\n` then sentence fallback |
+
+This table is **chunk statistics**, not retrieval quality. MSMARCO passages are already retrieval-sized, so at these budgets most strategies emit ~1 chunk/passage — a known null. A gold-label MRR ablation belongs in a later increment; we are not pretending the count table is that ablation.
+
+```bash
+python -m chunking.benchmark
 ```
 
 ---
 
-## Technology Stack
+## Guardrails (Task req #6)
 
-| Layer | Technology |
-| --- | --- |
-| Frontend | Next.js, React, TypeScript |
-| 3D / GIS | CesiumJS |
-| State Management | Zustand |
-| Backend | FastAPI, Uvicorn |
-| Validation / Config | Pydantic |
-| ORM / Database | SQLAlchemy, GeoAlchemy2 |
-| Database | PostgreSQL + PostGIS |
-| Geospatial Processing | GeoPandas, Shapely, PyProj, OSMnx |
-| Analysis | NetworkX, NumPy, SciPy, Pandas, OR-Tools |
-| HTTP | Requests, HTTPX |
-| Migrations | Alembic |
-| Local Infrastructure | Docker Compose |
-| Developer Automation | Make |
+Intent is not a similarity score. Layers 1–3 run **before** any extract/generate. Layers 4–5 run on the **generated** text only; a failed polish leaves the extractive span standing.
+
+| Layer | When | What |
+|---|---|---|
+| 1 Safety | before retrieve | injection / weapons / exploit patterns |
+| 2 Empty context | after retrieve | zero hits |
+| 3 Off-topic | after retrieve | cosine &lt; `SIMILARITY_THRESHOLD` (default **0.15**) |
+| 4 Faithfulness | after generate | invented numbers, stemmed overlap |
+| 5 Hedge | after generate | “I do not have information…” |
+
+Layer 3 is the OOD backstop that produced the 6 refusals in the fast-path bench (similarity 0.00–0.12 vs 0.15).
+
+An older 35-query precision/recall run (`benchmarks/guardrail_eval.py`) reported 85.7–88.6% accuracy when Layer 4/5 still flipped `refused=True`. After the two-tier change those layers no longer refuse the *request* — they reject the polish. **Do not re-run that script and republish 87% against the current orchestrator.**
 
 ---
 
-## Repository Structure
+## Harness (Task req #5)
 
-```text
-urban-digital-twin/
-│
-├── backend/
-│   ├── app/
-│   │   ├── agents/          # AI agents and orchestration
-│   │   ├── api/             # Versioned API routes
-│   │   ├── core/            # Configuration
-│   │   └── storage/         # Database/storage layer
-│   │
-│   ├── tests/               # Backend tests
-│   ├── Dockerfile
-│   ├── alembic.ini
-│   └── requirements.txt
-│
-├── frontend/
-│   ├── app/                 # Next.js App Router
-│   ├── cesium/              # Cesium viewer and map bridge
-│   ├── components/          # UI, panels and layout
-│   ├── stores/              # Zustand stores
-│   ├── lib/                 # API and application utilities
-│   ├── public/              # Static files and datasets
-│   ├── scripts/             # Build utilities
-│   └── types/               # TypeScript contracts
-│
-├── etl/                     # Geospatial data ingestion
-├── db/                      # Database schema and seed scripts
-├── data/                    # Project datasets
-├── cache/                   # Local cache
-├── infra/                   # Infrastructure configuration
-├── docs/                    # Documentation
-│
-├── ARCHITECTURE.md
-├── docker-compose.yml
-├── Makefile
-└── .env.example
-```
+`harness/orchestrator.py` is one typed call:
+
+1. STT (or `text_override`)
+2. Retrieve
+3. Layers 1–3
+4. Extractive span ← `fast_path_ms` stops here
+5. Optional generate
+6. Layers 4–5 on generated text only
+
+Retries with jitter live in `harness/retry.py` (429 `Retry-After` respected). Every stage returns `StepResult`. Nothing raises out of `process()`.
 
 ---
 
-## Requirements
-
-Before running the project, install:
-
-- Git
-- Docker
-- Docker Compose
-- Python 3
-- Node.js 20+
-- npm 10+
-- Modern browser with WebGL 2.0 support
-
-Optional:
-
-- Cesium Ion access token
-- Internet access for OpenStreetMap/Overpass ingestion
-
----
-
-## Quick Start
-
-### 1. Clone Repository
+## Quickstart
 
 ```bash
-git clone https://github.com/anugrahyadav1594/urban-digital-twin.git
-cd urban-digital-twin
-```
-
-### 2. Configure Environment
-
-```bash
-cp .env.example .env
-```
-
-Review the database and CRS configuration before starting the application.
-
-> Never commit real passwords, API keys, tokens, or other secrets.
-
----
-
-## Database Setup
-
-Start the local PostGIS instance:
-
-```bash
-make db-up
-```
-
-The Docker configuration uses:
-
-```text
-PostgreSQL + PostGIS
-postgis/postgis:17-3.5
-```
-
-Useful commands:
-
-```bash
-make db-up
-make db-down
-make db-reset
-make db-logs
-make doctor
-make check
-```
-
----
-
-## Backend Setup
-
-Navigate to the backend:
-
-```bash
-cd backend
-```
-
-Create a virtual environment:
-
-```bash
-python -m venv .venv
-```
-
-Activate it on Linux/macOS:
-
-```bash
-source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-```
+cp .env.example .env
+# ELEVENLABS_API_KEY=...     # voice
+# GROQ_API_KEY=...           # polish only; fast path works without it
 
-Start FastAPI:
+python -m dataset.loader --samples 30 --strategy recursive_sentence
+python -m app.benchmark          # official 50ms numbers, no API keys
+python app.py                    # http://127.0.0.1:8000
+```
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+curl -s http://127.0.0.1:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"what is a corporation?","generate":false}'
 ```
 
-Backend:
-
-```text
-http://localhost:8000
-```
-
-Swagger/OpenAPI:
-
-```text
-http://localhost:8000/docs
-```
-
-API:
-
-```text
-http://localhost:8000/api/v1
-```
+Expect `answer_source: "extractive"`, `timings.generation: 0`, `fast_path_ms` well under 50.
 
 ---
 
-## Frontend Setup
+## API
 
-Open a new terminal:
-
-```bash
-cd frontend
-```
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Start development server:
-
-```bash
-npm run dev
-```
-
-Frontend:
-
-```text
-http://localhost:3000
-```
-
-Cesium static assets are automatically copied through the frontend `postinstall` process.
-
-If required, manually run:
-
-```bash
-node scripts/copy-cesium.mjs
-```
+| Endpoint | Purpose |
+|---|---|
+| `POST /ask` `{question, generate}` | text → answer. `generate=false` is the budget path |
+| `POST /api/query` | audio and/or `text_override`, same `generate` flag |
+| `GET /api/benchmark?n=80` | live P50/P70/P100 over the fast path |
+| `GET /health` | passage count, 50ms budget |
+| `GET /api/metrics` | SQLite percentiles |
 
 ---
 
-## Environment Variables
-
-### Backend
-
-The root `.env.example` contains configuration for:
-
-```env
-POSTGIS_HOST=localhost
-POSTGIS_PORT=5432
-POSTGIS_DB=nagar_x_db
-POSTGIS_USER=postgres
-POSTGIS_PASSWORD=postgres
-
-STORAGE_SRID=4326
-ANALYSIS_SRID=32643
-
-ACTIVE_DATASET_VERSION=1
-
-DB_POOL_SIZE=5
-DB_MAX_OVERFLOW=10
-DB_ECHO=false
-SQL_STATEMENT_TIMEOUT_MS=30000
-```
-
-### Frontend
-
-Create the frontend environment file:
-
-```bash
-cp .env.local.example .env.local
-```
-
-Example:
-
-```env
-NEXT_PUBLIC_CESIUM_ION_TOKEN=
-
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
-
-NEXT_PUBLIC_CITY_LON=73.7389
-NEXT_PUBLIC_CITY_LAT=18.5913
-```
-
----
-
-## Frontend Commands
-
-| Command | Description |
-| --- | --- |
-| `npm run dev` | Start development server |
-| `npm run build` | Build production application |
-| `npm run start` | Start production application |
-| `npm run lint` | Run linting |
-| `node scripts/copy-cesium.mjs` | Copy Cesium assets |
-
-Production:
-
-```bash
-npm run build
-npm run start
-```
-
----
-
-## OpenStreetMap ETL
-
-The project contains a real OpenStreetMap ingestion pipeline.
-
-Run the default pilot ingestion:
-
-```bash
-python -m etl.ingest_osm
-```
-
-Increase the ingestion area:
-
-```bash
-python -m etl.ingest_osm --scale 3
-```
-
-Perform a dry run:
-
-```bash
-python -m etl.ingest_osm --dry-run
-```
-
-The ETL system processes real-world geospatial information and generates a layer-level ingestion report.
-
-Example layers:
-
-```text
-Roads
-Buildings
-Facilities
-Water Bodies
-Land Parcels
-Population Zones
-```
-
----
-
-## AI Planning Workflow
-
-The main orchestration layer is located at:
-
-```text
-backend/app/agents/orchestrator.py
-```
-
-The workflow is:
-
-```text
-User Planning Request
-          │
-          ▼
-   Planning Agent
-          │
-          ▼
-   Intent Extraction
-          │
-          ▼
-Deterministic Analysis
-          │
-    ┌─────┼────────┬─────────┐
-    ▼     ▼        ▼         ▼
-Population GIS    Risk      Cost
-    │     │        │         │
-    └─────┴────────┴─────────┘
-                  │
-                  ▼
-       Specialized Agents
-                  │
-                  ▼
-          Critic Validation
-                  │
-                  ▼
-          Report Generation
-                  │
-                  ▼
-          Planning Result
-```
-
-### AI Agents
-
-The orchestration layer contains:
-
-- `PlanningAgent`
-- `GISAgent`
-- `CostAgent`
-- `RiskAgent`
-- `CriticAgent`
-- `ReportAgent`
-- `LLMClient`
-
-### Deterministic Analysis
-
-The workflow can perform:
-
-- Population analysis
-- Density analysis
-- Travel-time calculation
-- Distance calculation
-- Constraint checking
-- Cost estimation
-- Site suitability scoring
-
-The architecture separates deterministic calculations from AI-based interpretation.
-
----
-
-## Coordinate Reference System
-
-The project follows a defined CRS policy.
-
-| Purpose | CRS |
-| --- | --- |
-| Storage | `EPSG:4326` |
-| Analysis | `EPSG:32643` |
-
-`EPSG:4326` is used for geographic storage.
-
-`EPSG:32643` is used for projected metric analysis for the Navi Mumbai pilot region.
-
----
-
-## Database Workflow
-
-The recommended database workflow is:
-
-```text
-make db-up
-     │
-     ▼
-Database Health Check
-     │
-     ▼
-Schema Validation
-     │
-     ▼
-Demo Data Seed
-     │
-     ▼
-Integration Tests
-```
-
-Run the entire verification process:
-
-```bash
-make verify
-```
-
-Individual commands:
-
-```bash
-make check
-make seed
-make test
-```
-
----
-
-## Development Workflow
-
-```text
-Clone Repository
-       │
-       ▼
-Configure Environment
-       │
-       ▼
-Start PostGIS
-       │
-       ▼
-Start FastAPI
-       │
-       ▼
-Start Next.js
-       │
-       ▼
-Run Verification
-       │
-       ▼
-Develop / Test
-```
-
-Recommended initial command:
-
-```bash
-make verify
-```
-
----
-
-## Frontend Workspace
-
-The frontend follows a desktop-style planning environment.
-
-### Navigation
-
-The horizontal navbar organizes the main application capabilities.
-
-### Floating Windows
-
-Planning tools are displayed as floating windows that can be:
-
-- Moved
-- Resized
-- Maximized
-- Restored
-- Snapped
-- Automatically aligned
-
-### Command Palette
-
-```text
-Ctrl + K
-```
-
-or:
-
-```text
-Cmd + K
-```
-
-opens the command palette.
-
-### Window Shortcuts
-
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl/Cmd + K` | Command palette |
-| `Ctrl/Cmd + 1..6` | Toggle workspace windows |
-| `Esc` | Close focused window |
-| Double-click title bar | Maximize / restore |
-| Drag to screen edge | Snap window |
-
----
-
-## Backend API
-
-The FastAPI application is defined in:
-
-```text
-backend/app/main.py
-```
-
-The backend provides:
-
-- REST API
-- OpenAPI documentation
-- Database connectivity checks
-- PostGIS diagnostics
-- CORS configuration
-- Structured database failure responses
-- Application-level exception handling
-- Versioned routing
-
-API prefix:
-
-```text
-/api/v1
-```
-
-Interactive documentation:
-
-```text
-http://localhost:8000/docs
-```
-
----
-
-## Database Architecture
-
-```text
-                FastAPI
-                   │
-                   ▼
-              SQLAlchemy
-                   │
-                   ▼
-             GeoAlchemy2
-                   │
-                   ▼
-          PostgreSQL + PostGIS
-                   │
-                   ▼
-            Urban Data Model
-```
-
-PostGIS provides spatial storage and querying for the digital-twin dataset.
-
-The local database is containerized using Docker Compose and persists its data using a Docker volume.
-
----
-
-## Project Documentation
-
-Additional documentation:
-
-```text
-ARCHITECTURE.md
-frontend/README.md
-docs/
-Makefile
-.env.example
-```
-
-Important files:
-
-| File | Purpose |
-| --- | --- |
-| `ARCHITECTURE.md` | System architecture |
-| `frontend/README.md` | Frontend documentation |
-| `docker-compose.yml` | PostGIS configuration |
-| `Makefile` | Development commands |
-| `.env.example` | Backend environment template |
-| `backend/app/main.py` | FastAPI entry point |
-| `backend/app/agents/orchestrator.py` | AI orchestration |
-| `etl/ingest_osm.py` | OSM ingestion |
-| `db/schema.sql` | Database schema |
-
----
-
-## Verification
-
-Run:
-
-```bash
-make verify
-```
-
-The command performs:
-
-```text
-Database Startup
-      ↓
-Database Connectivity Check
-      ↓
-Schema Check
-      ↓
-Demo Data Seeding
-      ↓
-Integration Tests
-```
-
-For troubleshooting:
-
-```bash
-make doctor
-```
-
----
-
-## Current Development Status
-
-NAGAR-X is an actively developed engineering prototype.
-
-Current project areas include:
-
-- 3D CesiumJS digital-twin visualization
-- Next.js planning workspace
-- Floating-window interface
-- FastAPI backend
-- PostGIS integration
-- OpenStreetMap ingestion
-- Geospatial processing
-- AI planning orchestration
-- Deterministic analytical tools
-- Database verification
-- Backend integration testing
-
-Some components are still evolving and require further validation, testing, security hardening, and deployment work before production use.
-
----
-
-## Contributing
-
-Contributions should maintain the separation between:
-
-- Frontend UI and state
-- Cesium visualization
-- Backend API
-- Deterministic analysis
-- Geospatial ETL
-- Database/storage
-- AI orchestration
-
-When changing configuration or development workflows, update the relevant documentation and environment examples.
-
----
-
-## Security
-
-Never commit:
-
-```text
-.env
-.env.local
-API keys
-Cesium tokens
-Database passwords
-LLM credentials
-```
-
-Use environment files for local configuration and secrets.
-
----
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+## Configuration
+
+| Variable | Purpose |
+|---|---|
+| `ELEVENLABS_API_KEY` | Primary STT |
+| `SARVAM_API_KEY` | Optional STT fallback (disabled in the graded path) |
+| `GROQ_API_KEY` | Polish only. Fast path and `/api/benchmark` do not need it |
+| `HF_TOKEN` | Optional, dataset download |
+| `SIMILARITY_THRESHOLD` | Layer 3 gate (default `0.15`) |
 
 ---
 
 ## Repository
 
-GitHub:
-
-https://github.com/anugrahyadav1594/urban-digital-twin
-
-Default branch:
-
 ```text
-main
+app.py                      FastAPI + demo UI
+app/benchmark.py            dashboard wrapper around the fast path
+benchmarks/fastpath.py      official <50ms bench (no Groq)
+benchmarks/run_benchmarks.py  old Groq+STT suite — not the 50ms number
+retrieval/extractive.py     sentence picker over the retrieved window
+retrieval/vector_store.py   in-memory TF-IDF cosine index
+harness/orchestrator.py     two-tier pipeline
+chunking/strategies.py      three chunkers
+dataset/loader.py           MSMARCO-XI subset ingest
 ```
 
 ---
 
-## NAGAR-X
+## License
 
-**AI-assisted urban planning.**
-
-**Geospatial intelligence.**
-
-**3D digital twins.**
-
-**Data-driven infrastructure decisions.**
+MIT. See [LICENSE](LICENSE).
