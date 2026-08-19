@@ -1,4 +1,5 @@
 "use client";
+import { useEffect } from "react";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { mapBridge } from "@/cesium/map-bridge";
 import { Empty, MetricCards, SectionTitle } from "@/components/ui/Bits";
@@ -8,6 +9,12 @@ export default function ResultsPanel() {
   const { results, activeId, setActive } = useAnalysisStore();
   const select = useSelectionStore((s) => s.select);
   const result = results.find((r) => r.resultId === activeId) ?? results[0] ?? null;
+
+  useEffect(() => {
+    if (result?.entities?.length) {
+      mapBridge.showCandidates(result.entities);
+    }
+  }, [result]);
 
   if (!result) return <Empty>No results yet. Results produced by any engine (suitability, accessibility, risk, optimisation) share this generic viewer.</Empty>;
 

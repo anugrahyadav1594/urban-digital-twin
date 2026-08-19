@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { CITY_CENTER, ION_TOKEN } from "@/lib/constants";
-import { FACILITIES, FLOOD_ZONE, PARCELS, ROADS, ZONE_COLOR } from "@/lib/city-model";
+import { FACILITIES, FLOOD_ZONE, PARCELS, ROADS, ZONE_COLOR, PARCEL_BY_ID } from "@/lib/city-model";
 import { loadAllLive } from "./liveData";
 import { api } from "@/lib/api/client";
 import { mapBridge } from "./map-bridge";
@@ -9,6 +9,7 @@ import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { useWindowStore } from "@/stores/window-store";
+import { useAnalysisStore } from "@/stores/analysis-store";
 import type { LayerKind, ResultEntity } from "@/types";
 
 /** CesiumJS is loaded from /public/cesium by a <script> in app/layout.tsx. */
@@ -449,24 +450,183 @@ export default function CesiumViewer() {
           });
         }
 
-        /* ── picking ─────────────────────────────────────────── */
+        /* ── picking & entity resolution ─────────────────────── */
+        /**
+         * Resolves any feature/result identifier to a Cesium entity across all layers.
+         * Handles canonical IDs, candidate prefixes (cand_), parcel prefixes (pf_, parcel:),
+         * building prefixes (building:), live compound IDs (e.g. parcel:42:0), and properties.ref.
+         */
+        const findCesiumEntity = (id: string): any => {
+          if (!id || typeof id !== "string") return null;
+
+          if (viewer?.entities?.getById) {
+            const ve = viewer.entities.getById(id);
+            if (ve) return ve;
+          }
+
+          const stripped = id.replace(
+            /^(cand_ring_|cand_|pf_|lu_|pop_|fl_|building:|parcel:|facility:|road:|water:|flood:)/,
+            ""
+          );
+
+          const keysToTry = [
+            id,
+            "cand_" + id,
+            "cand_ring_" + id,
+            "cand_" + stripped,
+            "pf_" + id,
+            "pf_" + stripped,
+            "parcel:" + id,
+            "parcel:" + stripped,
+            "building:" + id,
+            "building:" + stripped,
+            "facility:" + id,
+            "facility:" + stripped,
+            "road:" + id,
+            "road:" + stripped,
+            "lu_" + id,
+            "pop_" + id,
+            "fl_" + id,
+            stripped
+          ];
+
+          const prioritySources = [
+            "candidates",
+            "parcels",
+            "buildings",
+            "facilities",
+            "roads",
+            "emergency",
+            "proposals",
+            "landuse",
+            "population",
+            "flood",
+            "water"
+          ];
+
+          // 1. Direct getById lookup
+          for (const name of prioritySources) {
+            const src = ds[name];
+            if (!src?.entities?.getById) continue;
+            for (const key of keysToTry) {
+              const e = src.entities.getById(key);
+              if (e) return e;
+            }
+          }
+
+          // 2. Iterate entities to match compound live IDs (e.g. "parcel:42:0") or properties.ref
+          for (const name of prioritySources) {
+            const src = ds[name];
+            if (!src?.entities?.values) continue;
+            const match = src.entities.values.find((e: any) => {
+              const eid = String(e.id ?? "");
+              if (eid === id || eid === stripped) return true;
+              if (
+                eid.startsWith(`parcel:${id}:`) ||
+                eid.startsWith(`parcel:${stripped}:`) ||
+                eid.startsWith(`building:${id}:`) ||
+                eid.startsWith(`building:${stripped}:`) ||
+                eid.startsWith(`facility:${id}`) ||
+                eid.startsWith(`facility:${stripped}`) ||
+                eid.startsWith(`road:${id}:`) ||
+                eid.startsWith(`road:${stripped}:`)
+              ) {
+                return true;
+              }
+              const ref = e.properties?.ref?.getValue?.() ?? e.properties?.ref;
+              if (ref !== undefined && ref !== null) {
+                const sRef = String(ref);
+                if (sRef === id || sRef === stripped) return true;
+              }
+              return false;
+            });
+            if (match) return match;
+          }
+
+          return null;
+        };
+
+        /**
+         * Resolves coordinates for an identifier from active analysis results,
+         * selection store, or procedural models when no Cesium entity is available.
+         */
+        const findEntityCoordinates = (id: string): { lon: number; lat: number } | null => {
+          if (!id) return null;
+          const stripped = id.replace(
+            /^(cand_ring_|cand_|pf_|lu_|pop_|fl_|building:|parcel:|facility:|road:|water:|flood:)/,
+            ""
+          );
+
+          // Check active analysis results
+          const results = useAnalysisStore.getState().results;
+          for (const res of results) {
+            const match = res.entities.find(
+              (e) =>
+                e.entityId === id ||
+                e.entityId === stripped ||
+                e.label === id ||
+                String(e.entityId) === String(id) ||
+                String(e.entityId) === String(stripped)
+            );
+            if (match?.position && Number.isFinite(match.position.lon) && Number.isFinite(match.position.lat)) {
+              return { lon: match.position.lon, lat: match.position.lat };
+            }
+          }
+
+          // Check selection feature
+          const feat = useSelectionStore.getState().feature;
+          if (
+            feat &&
+            (feat.id === id || feat.id === stripped) &&
+            feat.position &&
+            Number.isFinite(feat.position.lon)
+          ) {
+            return { lon: feat.position.lon, lat: feat.position.lat };
+          }
+
+          // Check procedural parcels
+          const p =
+            PARCEL_BY_ID.get(id) ??
+            PARCEL_BY_ID.get(stripped) ??
+            PARCEL_BY_ID.get("parcel_" + id) ??
+            PARCEL_BY_ID.get("parcel_" + stripped) ??
+            PARCELS.find((x) => x.id === id || x.id === stripped || String(x.idx) === id || String(x.idx) === stripped);
+          if (p) return { lon: p.lon, lat: p.lat };
+
+          // Check procedural facilities
+          const f = FACILITIES.find((x) => x.id === id || x.id === stripped || x.id === "facility:" + id || x.id === "facility:" + stripped);
+          if (f) return { lon: f.lon, lat: f.lat };
+
+          // Check procedural roads
+          const r = ROADS.find((x) => x.id === id || x.id === stripped);
+          if (r?.path?.length) {
+            const mid = r.path[Math.floor(r.path.length / 2)];
+            return { lon: mid[0], lat: mid[1] };
+          }
+
+          return null;
+        };
+
         let highlighted: any[] = [];
         const clearHighlight = () => {
           highlighted.forEach((e) => {
-            if (e.box) e.box.material = e.__origMat;
-            if (e.rectangle) e.rectangle.material = e.__origMat;
+            const target = e.box ?? e.rectangle ?? e.polygon ?? e.cylinder;
+            if (target && e.__origMat !== undefined) {
+              target.material = e.__origMat;
+            }
           });
           highlighted = [];
         };
         const applyHighlight = (ids: string[]) => {
           clearHighlight();
           ids.forEach((id) => {
-            const e = ds.buildings.entities.getById(id) || ds.parcels.entities.getById("pf_" + id);
+            const e = findCesiumEntity(id);
             if (!e) return;
-            e.__origMat = e.box ? e.box.material : e.rectangle?.material;
+            const target = e.box ?? e.rectangle ?? e.polygon ?? e.cylinder;
+            if (!target) return;
+            e.__origMat = target.material;
             const mat = C("#38bdf8", 0.95);
-            if (e.box) e.box.material = mat;
-            else if (e.rectangle) e.rectangle.material = mat;
+            target.material = mat;
             highlighted.push(e);
           });
         };
@@ -794,13 +954,52 @@ export default function CesiumViewer() {
           rotateGlobe,
           toggleAutoRotate,
           toggleHighways,
-          flyTo: (entityId: string) => {
-            const p = PARCELS.find((x) => x.id === entityId);
-            const f = FACILITIES.find((x) => x.id === entityId);
-            const target = p ?? f;
-            if (!target) return;
-            flyHomeShortestRoute(target.lon, target.lat - 0.014, 2100);
-            applyHighlight([entityId]);
+          flyTo: async (entityId: string) => {
+            if (!entityId) {
+              console.warn("[cesium] flyTo: empty entityId provided");
+              return;
+            }
+
+            // 1. Try resolving to an actual Cesium entity
+            const entity = findCesiumEntity(entityId);
+            if (entity) {
+              applyHighlight([entityId]);
+              const isTopDown = activeViewModeRef.current === "topDown";
+              const pitch = isTopDown ? Cesium.Math.toRadians(-90) : Cesium.Math.toRadians(-45);
+              const range = 500;
+
+              try {
+                await viewer.flyTo(entity, {
+                  duration: 1.5,
+                  offset: new Cesium.HeadingPitchRange(0, pitch, range)
+                });
+                return;
+              } catch {
+                // viewer.flyTo can be cancelled if user triggered another flight
+                return;
+              }
+            }
+
+            // 2. Fallback to coordinate resolution
+            const pos = findEntityCoordinates(entityId);
+            if (pos) {
+              applyHighlight([entityId]);
+              const isTopDown = activeViewModeRef.current === "topDown";
+              flyHomeShortestRoute(
+                pos.lon,
+                isTopDown ? pos.lat : pos.lat - 0.006,
+                isTopDown ? 1400 : 1000,
+                {
+                  heading: 0,
+                  pitch: isTopDown ? Cesium.Math.toRadians(-90) : Cesium.Math.toRadians(-45),
+                  roll: 0
+                }
+              );
+              return;
+            }
+
+            // 3. Failed lookup
+            console.warn("[cesium] flyTo: entity or location not found for ID:", entityId);
           },
           highlight: applyHighlight,
           setLayerVisible: (id: LayerKind, v: boolean) => {
@@ -980,6 +1179,27 @@ export default function CesiumViewer() {
           clearEmergency: () => ds.emergency.entities.removeAll(),  // routes, hazard and network impact all live here
           clearCandidates: () => ds.candidates.entities.removeAll(),
           clearProposals: () => ds.proposals.entities.removeAll(),
+          showRoadProposal: (geom: any) => {
+            ds.proposals.entities.removeById("proposal_road");
+            if (!geom) return;
+            let coords: number[][] = [];
+            if (geom.type === "LineString" && Array.isArray(geom.coordinates)) {
+              coords = geom.coordinates;
+            } else if (Array.isArray(geom)) {
+              coords = geom;
+            }
+            if (coords.length > 1) {
+              ds.proposals.entities.add({
+                id: "proposal_road",
+                polyline: {
+                  positions: Cesium.Cartesian3.fromDegreesArray(coords.flat()),
+                  width: 8,
+                  material: C("#a855f7", 0.95),
+                  clampToGround: true
+                }
+              });
+            }
+          },
           setDrawMode: () => { },
           placeFacility: () => { },
           setYear: (y: number) => {

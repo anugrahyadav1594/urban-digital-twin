@@ -256,7 +256,7 @@ export async function loadParcels(C: Cesium, dsParcels: any, dsFlood: any): Prom
           outlineColor: C.Color.fromCssColorString("#22d3ee").withAlpha(0.7),
           height: 3
         },
-        properies: { kind: "parcel", ref: String(p.id), zoning: p.zoning, floodRisk: risk }
+        properties: { kind: "parcel", ref: String(p.id), zoning: p.zoning, floodRisk: risk }
       });
       if (risk >= 0.3) {
         dsFlood.entities.add({
