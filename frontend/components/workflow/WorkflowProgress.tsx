@@ -120,7 +120,11 @@ export default function WorkflowProgress() {
               return (
                 <div
                   key={s.id}
-                  onClick={() => jumpToStep(idx)}
+                  onClick={() => {
+                    if (idx <= currentStepIndex || completedStepIds.includes(s.id)) {
+                      jumpToStep(idx);
+                    }
+                  }}
                   style={{
                     padding: "6px 8px",
                     borderRadius: "6px",

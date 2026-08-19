@@ -1,25 +1,72 @@
-"""Pydantic schemas for the workflow orchestration layer."""
+"""Pydantic DTO models for backend workflow orchestration."""
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Literal
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
-WorkflowId = Literal["plan", "stress", "improve", "compare", "explain"]
-ValidationStatus = Literal["PENDING", "PASS", "FAIL"]
+
+class WorkflowId(str, Enum):
+    PLAN = "plan"
+    STRESS = "stress"
+    IMPROVE = "improve"
+    COMPARE = "compare"
+    EXPLAIN = "explain"
 
 
-class NextActionItem(BaseModel):
+class WorkflowStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class StepStatus(str, Enum):
+    LOCKED = "locked"
+    READY = "ready"
+    RUNNING = "running"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
+class NextAction(BaseModel):
     id: str
     label: str
-    target_step: str
-    target_window: str | None = None
     available: bool = True
-    description: str | None = None
+    reason: str | None = None
+    target_step: str | None = None
+    target_window: str | None = None
+
+
+class WorkflowSession(BaseModel):
+    session_id: str
+    workflow_id: WorkflowId
+    scenario_id: str | None = None
+    current_step: str
+    completed_steps: list[str] = Field(default_factory=list)
+    status: WorkflowStatus = WorkflowStatus.ACTIVE
+    context: dict[str, Any] = Field(default_factory=dict)
+    result_ids: list[str] = Field(default_factory=list)
+    validation_status: str = "PENDING"
+    created_at: str
+    updated_at: str
+
+
+class WorkflowStepResult(BaseModel):
+    session_id: str
+    workflow_id: WorkflowId
+    step_id: str
+    status: StepStatus
+    result_id: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    next_actions: list[NextAction] = Field(default_factory=list)
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConstraintValidationResult(BaseModel):
     candidate_id: str
-    status: ValidationStatus
+    status: Literal["PASS", "FAIL"]
     constraints: dict[str, str] = Field(default_factory=dict)
     failed_rules: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -41,30 +88,6 @@ class DecisionRecord(BaseModel):
     provenance: dict[str, Any] = Field(default_factory=dict)
     source_result_ids: list[str] = Field(default_factory=list)
     scenario_id: str | None = None
-
-
-class WorkflowSession(BaseModel):
-    session_id: str
-    workflow_id: WorkflowId
-    scenario_id: int | str
-    current_step: str
-    completed_steps: list[str] = Field(default_factory=list)
-    validation_status: ValidationStatus = "PENDING"
-    result_ids: list[str] = Field(default_factory=list)
-    context_data: dict[str, Any] = Field(default_factory=dict)
-    created_at: str
-    updated_at: str
-
-
-class WorkflowResultEnvelope(BaseModel):
-    workflow: WorkflowId
-    session_id: str
-    step: str
-    status: Literal["running", "complete", "failed"]
-    result: dict[str, Any] = Field(default_factory=dict)
-    next_actions: list[NextActionItem] = Field(default_factory=list)
-    provenance: dict[str, Any] = Field(default_factory=dict)
-    job_id: str | None = None
 
 
 class StartWorkflowRequest(BaseModel):
