@@ -96,6 +96,7 @@ def list_regions(s: DbSession) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for rid, spec in REGIONS.items():
         layers: dict[str, int] = {}
+        extents: dict[str, Any] = {}
         for layer in LAYERS:
             table = _table_for(rid, layer)
             try:
@@ -106,6 +107,26 @@ def list_regions(s: DbSession) -> list[dict[str, Any]]:
                 continue
             if n:
                 layers[layer] = int(n)
+                # Where the geometry actually sits, so a region that returns
+                # rows but draws nothing can be told apart from an empty one.
+                try:
+                    gcol = _geom_column(s, table)
+                    if gcol:
+                        ext = s.execute(text(f"""
+                            SELECT ST_SRID({gcol}),
+                                   ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e)
+                            FROM {table},
+                                 LATERAL (SELECT ST_Extent({gcol}) OVER () AS e) x
+                            LIMIT 1
+                        """)).first()
+                        if ext:
+                            srid, x0, y0, x1, y1 = ext
+                            extents[layer] = {
+                                "srid": int(srid or 0),
+                                "bbox": [x0, y0, x1, y1],
+                            }
+                except Exception:                            # noqa: BLE001
+                    pass
         minx, miny, maxx, maxy = spec["bounds"]
         out.append({
             "id": rid,
@@ -116,6 +137,7 @@ def list_regions(s: DbSession) -> list[dict[str, Any]]:
             "layers": layers,
             "featureCount": sum(layers.values()),
             "available": bool(layers),
+            "extents": extents,
         })
     return out
 
@@ -171,7 +193,17 @@ def region_geojson(region_id: str, s: DbSession,
                 order = f"ORDER BY ST_Area({gcol}::geography) DESC"
 
             rows = s.execute(text(f"""
-                SELECT ST_AsGeoJSON(ST_Transform(ST_SetSRID({gcol}, 4326), 4326)) AS g
+                SELECT ST_AsGeoJSON(
+                    CASE
+                        -- SRID 0 means "unknown", not "wrong": the extractor
+                        -- wrote lon/lat but lost the tag. Stamp it.
+                        WHEN ST_SRID({gcol}) = 0 THEN ST_SetSRID({gcol}, 4326)
+                        -- A real projected CRS must be reprojected, not
+                        -- relabelled, or the coordinates land in the ocean.
+                        WHEN ST_SRID({gcol}) <> 4326 THEN ST_Transform({gcol}, 4326)
+                        ELSE {gcol}
+                    END
+                ) AS g
                 FROM {table} {where} {order} LIMIT :lim
             """), params).all()
 

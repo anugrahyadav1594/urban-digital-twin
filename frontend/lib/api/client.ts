@@ -140,7 +140,7 @@ export const api = {
     return SCENARIOS;
   },
 
-  createScenario: async (name: string, horizon: number = 2035, populationGrowthPct: number = 2.5, description?: string): Promise<Scenario> => {
+  createScenario: async (name: string, horizon: number = 2035, populationGrowthPct: number = 2.5, description?:tring): Promise<Scenario> => {
     const res = await tryFetch<Scenario>("/scenarios", {
       method: "POST",
       body: JSON.stringify({ name, horizon, populationGrowthPct, description })
@@ -331,6 +331,36 @@ export const api = {
   },
 
   listLayers: async (): Promise<Layer[] | null> => await tryFetch<Layer[]>("/layers"),
+
+  // ---- City scoring / development packages (product report S1-S3) ----
+
+  /** The scoring framework itself: dimensions, units, benchmarks. */
+  scoringDimensions: async (): Promise<any> =>
+    await tryFetch("/scoring/dimensions"),
+
+  /** City scorecard for a region, with benchmark comparison. */
+  cityScore: async (region = "adivali_devad"): Promise<any> =>
+    await tryFetch(`/scoring/city?region=${encodeURIComponent(region)}`,
+                   undefined, T_ANALYSIS),
+
+  /** Scorecard recomputed with custom dimension weights. */
+  cityScoreWeighted: async (region: string, weights: Record<string, number>):
+    Promise<any> => await postStrict("/scoring/city", { region, weights }),
+
+  /** Generate a coordinated development package from the score gaps. */
+  developmentPackage: async (body: {
+    region?: string; targetUplift?: number; priorities?: string[];
+    budget?: number | null; maxActions?: number;
+    weights?: Record<string, number> | null;
+  }): Promise<any> => await postStrict("/scoring/package", body),
+
+  /** Build Scenario A/B/C and compare them on common KPIs. */
+  comparePackages: async (body: {
+    region?: string;
+    variants?: Array<{ name: string; targetUplift?: number;
+                       priorities?: string[]; budget?: number | null }>;
+    weights?: Record<string, number> | null;
+  }): Promise<any> => await postStrict("/scoring/compare", body),
 
   /** Comparison regions extracted by db/extract_batch.py. */
   listRegions: async (): Promise<any[]> => (await tryFetch<any[]>("/regions")) ?? [],

@@ -16,6 +16,8 @@ import ComparisonPanel from "@/components/panels/ComparisonPanel";
 import AIPanel from "@/components/panels/AIPanel";
 import AgentTracePanel from "@/components/panels/AgentTracePanel";
 import RegionsPanel from "@/components/panels/RegionsPanel";
+import ScorecardPanel from "@/components/panels/ScorecardPanel";
+import DevelopmentPanel from "@/components/panels/DevelopmentPanel";
 
 export const WINDOW_CONTENT: Record<WindowId, React.ComponentType> = {
   city: CityPanel,
@@ -30,6 +32,8 @@ export const WINDOW_CONTENT: Record<WindowId, React.ComponentType> = {
   simulation: SimulationPanel,
   emergency: EmergencyPanel,
   regions: RegionsPanel,
+  scorecard: ScorecardPanel,
+  development: DevelopmentPanel,
   jobs: JobMonitorPanel,
   comparison: ComparisonPanel,
   ai: AIPanel,

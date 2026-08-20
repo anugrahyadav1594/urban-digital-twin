@@ -6,7 +6,7 @@ import { NAVBAR_HEIGHT, TASKBAR_HEIGHT } from "@/lib/constants";
 export type WindowId =
   | "city" | "layers" | "legend" | "inspector" | "scenario" | "changes"
   | "planning" | "analysis" | "results" | "simulation" | "jobs"
-  | "emergency" | "regions"
+  | "emergency" | "regions" | "scorecard" | "development"
   | "comparison" | "ai" | "trace";
 
 export type Pin = "none" | "left" | "right";
@@ -38,7 +38,7 @@ export type WindowDef = {
 export const WINDOW_REGISTRY: Record<WindowId, WindowDef> = {
   city:       { title: "City Information",   icon: "◈", defaultSize: { width: 340, height: 420 }, minSize: { width: 280, height: 260 }, defaultPos: { x: 24, y: 70 } },
   layers:     { title: "Layers",             icon: "≣", defaultSize: { width: 320, height: 500 }, minSize: { width: 260, height: 300 }, defaultPos: { x: 24, y: 70 } },
-  legend:     { title: "Legend",             icon: "▦", defaultSize: { width: 280, height: 330 }, minSize: { width: 220, height: 220 }, defaultPos: { x: 24, y: 590 } },
+  legend:     { title: "Legend",             icon: "▦", def: { width: 280, height: 330 }, minSize: { width: 220, height: 220 }, defaultPos: { x: 24, y: 590 } },
   inspector:  { title: "Object Inspector",   icon: "◎", defaultSize: { width: 360, height: 500 }, minSize: { width: 300, height: 350 }, defaultPos: { x: -390, y: 70 } },
   scenario:   { title: "Scenario Manager",   icon: "⌘", defaultSize: { width: 380, height: 460 }, minSize: { width: 320, height: 300 }, defaultPos: { x: 370, y: 90 } },
   changes:    { title: "Scenario Changes",   icon: "≡", defaultSize: { width: 380, height: 360 }, minSize: { width: 300, height: 240 }, defaultPos: { x: 400, y: 420 } },
@@ -48,6 +48,8 @@ export const WINDOW_REGISTRY: Record<WindowId, WindowDef> = {
   simulation: { title: "Simulation",         icon: "▶", defaultSize: { width: 520, height: 300 }, minSize: { width: 420, height: 250 }, defaultPos: { x: 300, y: 640 } },
   emergency:  { title: "Emergency Response", icon: "✚", defaultSize: { width: 430, height: 660 }, minSize: { width: 380, height: 420 }, defaultPos: { x: 800, y: 70 } },
   regions:    { title: "Regions",            icon: "◍", defaultSize: { width: 340, height: 460 }, minSize: { width: 280, height: 300 }, defaultPos: { x: 24, y: 120 } },
+  scorecard:  { title: "City Scorecard",     icon: "◉", defaultSize: { width: 360, height: 620 }, minSize: { width: 300, height: 380 }, defaultPos: { x: 24, y: 70 } },
+  development:{ title: "Development Planner", icon: "◈", defaultSize: { width: 400, height: 660 }, minSize: { width: 340, height: 420 }, defaultPos: { x: 400, y: 70 } },
   jobs:       { title: "Job Monitor",        icon: "◔", defaultSize: { width: 380, height: 380 }, minSize: { width: 320, height: 260 }, defaultPos: { x: -400, y: 600 } },
   comparison: { title: "Scenario Comparison",icon: "⚖", defaultSize: { width: 640, height: 440 }, minSize: { width: 500, height: 350 }, defaultPos: { x: 260, y: 200 } },
   ai:         { title: "Planning Assistant", icon: "✦", defaultSize: { width: 430, height: 620 }, minSize: { width: 350, height: 400 }, defaultPos: { x: -460, y: 90 } },
@@ -77,7 +79,6 @@ type Store = {
   resizeWindow: (id: WindowId, r: { x: number; y: number; width: number; height: number }) => void;
   minimizeWindow: (id: WindowId) => void;
   maximizeWindow: (id: WindowId) => void;
-  restoreWindow: (id: WindowId) => void;
   pinWindow: (id: WindowId, pin: Pin) => void;
   resetWindow: (id: WindowId) => void;
   applyPreset: (name: string) => void;

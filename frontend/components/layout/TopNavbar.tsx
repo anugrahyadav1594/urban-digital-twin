@@ -3,8 +3,6 @@ import { useEffect, useState } from "react";
 import { PRESETS, useWindowStore, type WindowId } from "@/stores/window-store";
 import { useMapStore } from "@/stores/map-store";
 import { useScenarioStore } from "@/stores/scenario-store";
-import { useWorkflowStore } from "@/stores/workflow-store";
-import { WORKFLOWS, type WorkflowId } from "@/lib/workflows";
 import { mapBridge } from "@/cesium/map-bridge";
 
 type Group = { label: string; items: { id: WindowId; label: string; kbd?: string }[] };
@@ -16,6 +14,7 @@ const GROUPS: Group[] = [
   { label: "Planning", items: [{ id: "planning", label: "Site suitability / tools", kbd: "⌘ 2" }, { id: "inspector", label: "Object inspector" }] },
   { label: "Analysis", items: [{ id: "analysis", label: "Analysis", kbd: "⌘ 3" }, { id: "results", label: "Results" }] },
   { label: "Simulation", items: [{ id: "simulation", label: "Simulation controls" }, { id: "jobs", label: "Job monitor" }] },
+  { label: "Improve", items: [{ id: "scorecard", label: "City scorecard" }, { id: "development", label: "Development planner" }] },
   { label: "Emergency", items: [{ id: "emergency", label: "Route finder / disaster simulator" }] },
   { label: "Compare", items: [{ id: "comparison", label: "Scenario comparison", kbd: "⌘ 6" }, { id: "regions", label: "Comparison regions" }] },
   { label: "AI", items: [{ id: "ai", label: "Planning assistant", kbd: "⌘ 5" }, { id: "trace", label: "Agent trace" }] }
@@ -41,17 +40,14 @@ const ChevronDownIcon = () => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="chevron-icon" suppressHydrationWarning><path d="m6 9 6 6 6-6"/></svg>
 );
 
-const WorkflowIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-);
-
 const GROUP_ICONS: Record<string, React.ReactNode> = {
   City: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg>,
   Scenario: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>,
   Layers: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
   Planning: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>,
-  Analysis: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  Analysis: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
   Simulation: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><polygon points="5 3 19 12 5 21 5 3"/></svg>,
+  Improve: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M3 17l6-6 4 4 8-8"/><path d="M21 7v6h-6"/></svg>,
   Emergency: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M12 5v14"/><path d="M5 12h14"/></svg>,
   Compare: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></svg>,
   AI: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/></svg>
@@ -63,10 +59,9 @@ const WorkspaceIcon = () => (
 
 export default function TopNavbar() {
   const [open, setOpen] = useState<string | null>(null);
-  const { openWindow, applyPreset, closeAll, autoArrangeWindows } = useWindowStore();
+      const { openWindow, applyPreset, closeAll, autoArrangeWindows } = useWindowStore();
   const { demo, ready } = useMapStore();
   const { scenarios, activeId, setActive } = useScenarioStore();
-  const { activeWorkflowId, startWorkflow } = useWorkflowStore();
 
   useEffect(() => {
     const close = () => setOpen(null);
@@ -79,58 +74,6 @@ export default function TopNavbar() {
   return (
     <div className="navbar" onClick={(e) => e.stopPropagation()} suppressHydrationWarning>
       <div className="brand"><span className="dot" />NAGAR-X</div>
-      <div className="nav-sep" />
-
-      {/* Primary Workflows Menu */}
-      <div style={{ position: "relative" }}>
-        <button
-          className={"navitem" + (open === "workflows" || activeWorkflowId ? " active" : "")}
-          style={{
-            background: activeWorkflowId ? "rgba(56,189,248,.25)" : undefined,
-            borderColor: "rgba(56,189,248,.4)",
-            borderStyle: "solid",
-            borderWidth: "1px"
-          }}
-          onClick={() => setOpen(open === "workflows" ? null : "workflows")}
-        >
-          <WorkflowIcon />
-          <span>Workflows</span>
-          <ChevronDownIcon />
-        </button>
-
-        {open === "workflows" && (
-          <div className="menu" style={{ minWidth: 260 }}>
-            <div className="sec">Planner Workflows</div>
-            {(Object.keys(WORKFLOWS) as WorkflowId[]).map((wfId) => {
-              const wf = WORKFLOWS[wfId];
-              const isCurrent = activeWorkflowId === wfId;
-              return (
-                <button
-                  key={wfId}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    color: isCurrent ? "var(--accent)" : undefined
-                  }}
-                  onClick={() => {
-                    startWorkflow(wfId);
-                    setOpen(null);
-                  }}
-                >
-                  <span style={{ fontSize: 13 }}>{wf.icon}</span>
-                  <div style={{ flex: 1, textAlign: "left" }}>
-                    <div style={{ fontWeight: isCurrent ? 700 : 500 }}>{wf.title}</div>
-                    <div className="muted" style={{ fontSize: 10 }}>{wf.badge}</div>
-                  </div>
-                  {isCurrent && <span className="chip info" style={{ fontSize: 9 }}>ACTIVE</span>}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
       <div className="nav-sep" />
 
       {GROUPS.map((g) => (
