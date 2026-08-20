@@ -60,7 +60,14 @@ export type Metric = { key: string; label: string; value: number | string; unit?
 
 export type ResultLayer = { id: string; type: "heatmap" | "points" | "polygons" | "lines"; label: string };
 
-export type ResultEntity = { entityId: string; score: number; label: string; position: { lon: number; lat: number }; breakdown: Record<string, number> };
+export type ResultEntity = {
+  entityId: string;
+  score?: number | null;
+  label: string;
+  position: { lon: number; lat: number };
+  breakdown?: Record<string, number>;
+  metrics?: Record<string, any>;
+};
 
 export type ComparedScenario = {
   scenarioId: string;

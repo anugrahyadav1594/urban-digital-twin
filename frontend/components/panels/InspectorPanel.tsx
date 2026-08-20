@@ -165,7 +165,7 @@ export default function InspectorPanel() {
         title="CONTEXTUAL DECISION"
         prompt={
           isCandidate
-            ? "Candidate evaluated. Validate slope and environmental constraints before adding to scenario."
+            ? "Candidate evaluated. Validate slope and environmental constraints on the backend before adding to scenario."
             : isRoad
             ? "Road segment selected. Analyze network connectivity and travel time impacts."
             : isFacility
@@ -173,10 +173,25 @@ export default function InspectorPanel() {
             : "Parcel selected. Use as location for site suitability planning."
         }
         actionLabel={isCandidate ? "Validate Constraints" : isRoad ? "Analyze Network" : "Plan Facility Here"}
-        onAction={() => {
-          if (isCandidate) openWindow("analysis");
-          else if (isRoad) openWindow("analysis");
-          else openWindow("planning");
+        onAction={async () => {
+          if (isCandidate) {
+            try {
+              const { api } = await import("@/lib/api/client");
+              const { useWorkflowStore } = await import("@/stores/workflow-store");
+              const sessId = useWorkflowStore.getState().context.backendSessionId || "wf_sess_default";
+              const vRes = await api.planValidate({ session_id: sessId, candidate_id: feature.id });
+              if (vRes?.result) {
+                useWorkflowStore.getState().setContext({ activeCandidateId: feature.id, customData: vRes.result });
+              }
+            } catch (err) {
+              console.warn("Backend validation warning:", err);
+            }
+            openWindow("analysis");
+          } else if (isRoad) {
+            openWindow("analysis");
+          } else {
+            openWindow("planning");
+          }
         }}
         targetWindow={isCandidate ? "analysis" : isRoad ? "analysis" : "planning"}
         secondaryActionLabel="Add Proposal"

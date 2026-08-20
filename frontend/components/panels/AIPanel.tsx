@@ -46,7 +46,7 @@ export default function AIPanel() {
 
     const explanationText = `### Grounded Decision Record: ${activeResult.title}
 
-**Primary Recommendation:** ${top ? `${top.label} (Score: ${top.score.toFixed(1)}/100)` : "N/A"}
+**Primary Recommendation:** ${top ? `${top.label}${top.score != null ? ` (Score: ${top.score.toFixed(1)}/100)` : ""}` : "N/A"}
 **Dataset Version:** \`${activeResult.datasetVersion}\` | **Scenario Version:** \`${activeResult.scenarioVersion}\`
 
 #### Engine Metrics & KPIs:
@@ -140,7 +140,7 @@ ${activeResult.explanation || "Selected based on optimal balance between travel 
         role: "assistant",
         resultId: result.resultId,
         text: top
-          ? `Grounded Recommendation: ${top.label} (score ${top.score.toFixed(1)}/100).\n\n${result.explanation}`
+          ? `Grounded Recommendation: ${top.label}${top.score != null ? ` (score ${top.score.toFixed(1)}/100)` : ""}.\n\n${result.explanation}`
           : "No parcel satisfies the current constraint set."
       });
     } catch (err: any) {

@@ -175,6 +175,28 @@ export default function ScorecardPanel() {
             {card.benchmarkSource === "published" && " · benchmark from published reference values"}
           </div>
 
+          {/* Provenance of the inputs. Comparison cities are scored from OSM
+              extracts with an estimated population, and that must be visible
+              rather than buried in the warnings list. */}
+          {card.populationSource === "estimated from building footprints" && (
+            <div style={{
+              padding: "6px 8px", borderRadius: 6, fontSize: 10,
+              marginBottom: 8, lineHeight: 1.5,
+              background: "rgba(234,179,8,0.10)",
+              border: "1px solid rgba(234,179,8,0.35)",
+            }}>
+              <strong>Estimated inputs.</strong> Population is derived from{" "}
+              {Number(card.populationEvidence?.buildingsResidential ?? 0).toLocaleString()}{" "}
+              residential building footprints
+              {card.populationEvidence?.assumedFloors
+                ? ` (${card.populationEvidence.assumedFloors} floors, ${card.populationEvidence.m2PerPerson} m²/person)`
+                : ""}, not a census count. Flood risk uses a
+              distance-to-water proxy. Per-capita dimensions inherit this
+              uncertainty.
+              {card.analysisSrid ? ` Analysis CRS EPSG:${card.analysisSrid}.` : ""}
+            </div>
+          )}
+
           <SectionTitle>Dimensions</SectionTitle>
           {dims.map((d: any) => <DimensionBar key={d.key} d={d} />)}
 

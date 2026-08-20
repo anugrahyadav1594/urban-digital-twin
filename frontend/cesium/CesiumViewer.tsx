@@ -837,7 +837,7 @@ export default function CesiumViewer() {
                   material: C(i === 0 ? "#fde047" : i < 3 ? "#38bdf8" : "#64748b", 0.9)
                 },
                 label: {
-                  text: "#" + (i + 1) + "  " + c.score.toFixed(1),
+                  text: "#" + (i + 1) + "  " + (c.score != null ? c.score.toFixed(1) : c.label),
                   font: "bold 12px monospace", fillColor: C("#0b1220"),
                   showBackground: true, backgroundColor: C(i === 0 ? "#fde047" : "#38bdf8", 0.92),
                   pixelOffset: new Cesium.Cartesian2(0, -40), verticalOrigin: Cesium.VerticalOrigin.BOTTOM

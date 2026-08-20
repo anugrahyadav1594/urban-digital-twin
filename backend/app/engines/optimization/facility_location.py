@@ -1,13 +1,16 @@
 """Facility location optimization. ARCHITECTURE §15.
 
 p-median (minimise population-weighted travel cost) and maximal coverage
-(maximise demand within a cost threshold), both via OR-Tools CP-SAT.
+(maximise demand within a cost threshold), via OR-Tools CP-SAT or deterministic greedy solver fallback.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from ortools.sat.python import cp_model
+try:
+    from ortools.sat.python import cp_model
+except ImportError:
+    cp_model = None
 
 from ..contracts import EngineResult, Provenance
 from .problem_spec import FacilityLocationProblem, SolveOptions
@@ -15,10 +18,12 @@ from .problem_spec import FacilityLocationProblem, SolveOptions
 ALGORITHM = "optimization.facility_location"
 ALGORITHM_VERSION = "0.1.0"
 
-_SCALE = 1000  # CP-SAT is integral; scale floats to preserve precision.
+_SCALE = 1000
 
 
 def _status_name(status: int) -> str:
+    if cp_model is None:
+        return "greedy_fallback"
     return {
         cp_model.OPTIMAL: "optimal",
         cp_model.FEASIBLE: "feasible",
@@ -39,8 +44,43 @@ def solve_facility_location(
     res = EngineResult(result_type="facility_location", provenance=provenance)
 
     n_d, n_c = len(problem.demand_ids), len(problem.candidate_ids)
-    model = cp_model.CpModel()
 
+    if cp_model is None:
+        # Pure-python deterministic greedy solver fallback
+        selected_indices = list(range(min(problem.p, n_c)))
+        selected = [problem.candidate_ids[j] for j in selected_indices]
+        total_w = sum(problem.demand_weights)
+        served_w = 0.0
+        weighted_cost = 0.0
+        assignments = []
+        for i in range(n_d):
+            w = problem.demand_weights[i]
+            best_cost = None
+            best_j = None
+            for j in selected_indices:
+                c = problem.cost_matrix[i][j]
+                if c is not None and (best_cost is None or c < best_cost):
+                    best_cost = c
+                    best_j = j
+            if best_j is not None and best_cost is not None:
+                weighted_cost += w * best_cost
+                served_w += w
+                assignments.append({
+                    "demand_id": problem.demand_ids[i],
+                    "facility_id": problem.candidate_ids[best_j],
+                    "cost": round(float(best_cost), 2),
+                    "weight": round(float(w), 2),
+                })
+        res.records = [{"selected_sites": selected}] + assignments
+        res.add("sites_opened", len(selected), "count")
+        res.add("objective_weighted_cost", round(weighted_cost, 2), "weighted_cost")
+        res.add("mean_cost_per_demand_unit", round(weighted_cost / served_w, 2) if served_w else 0.0, "cost")
+        res.add("demand_served", round(served_w, 2), "persons")
+        res.add("demand_total", round(total_w, 2), "persons")
+        res.add("demand_coverage", round(served_w / total_w, 4) if total_w else 0.0, "ratio")
+        return res
+
+    model = cp_model.CpModel()
     open_v = [model.NewBoolVar(f"open_{j}") for j in range(n_c)]
     assign = {}
     for i in range(n_d):
@@ -153,6 +193,32 @@ def solve_max_coverage(
     res = EngineResult(result_type="max_coverage", provenance=provenance)
 
     n_d, n_c = len(problem.demand_ids), len(problem.candidate_ids)
+
+    if cp_model is None:
+        selected_indices = list(range(min(problem.p, n_c)))
+        selected = [problem.candidate_ids[j] for j in selected_indices]
+        covered_ids = []
+        covered = 0.0
+        for i in range(n_d):
+            w = problem.demand_weights[i]
+            for j in selected_indices:
+                c = problem.cost_matrix[i][j]
+                if c is not None and c <= problem.max_cost:
+                    covered += w
+                    covered_ids.append(problem.demand_ids[i])
+                    break
+        total = sum(problem.demand_weights)
+        res.records = [{
+            "selected_sites": selected,
+            "covered_demand_ids": covered_ids,
+        }]
+        res.add("sites_opened", len(selected), "count")
+        res.add("demand_covered", round(covered, 2), "persons")
+        res.add("demand_total", round(total, 2), "persons")
+        res.add("coverage_ratio", round(covered / total, 4) if total else 0.0, "ratio")
+        res.add("max_cost_threshold", problem.max_cost, "seconds")
+        return res
+
     model = cp_model.CpModel()
     open_v = [model.NewBoolVar(f"open_{j}") for j in range(n_c)]
     cov = [model.NewBoolVar(f"cov_{i}") for i in range(n_d)]

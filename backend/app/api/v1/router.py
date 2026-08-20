@@ -6,9 +6,12 @@ from fastapi import APIRouter
 from .routers import (agents, analysis, city, emergency, features, health,
                       jobs, layers, optimization, planning, regions, results,
                       scenario, scoring, simulation)
+from ...workflows import router as workflows_router
 
 api_router = APIRouter()
 for m in (health, city, layers, regions, features, planning, analysis,
           scenario, scoring, results, simulation, emergency, optimization,
           agents, jobs):
     api_router.include_router(m.router)
+
+api_router.include_router(workflows_router.router)

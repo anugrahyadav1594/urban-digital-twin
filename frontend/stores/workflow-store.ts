@@ -8,6 +8,7 @@ import { useLayerStore } from "./layer-store";
 import type { LayerKind } from "@/types";
 
 export type WorkflowContext = {
+  backendSessionId?: string;
   activeCandidateId?: string;
   activeResultId?: string;
   activeScenarioId?: string;
@@ -26,7 +27,7 @@ type WorkflowStore = {
   currentWorkflow: () => WorkflowDef | null;
   currentStep: () => WorkflowStepDef | null;
 
-  startWorkflow: (id: WorkflowId, initialStepIndex?: number) => void;
+  startWorkflow: (id: WorkflowId, initialStepIndex?: number) => Promise<void>;
   advanceStep: () => void;
   prevStep: () => void;
   jumpToStep: (stepIdOrIndex: string | number) => void;
@@ -83,7 +84,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         return wf.steps[get().currentStepIndex] ?? null;
       },
 
-      startWorkflow: (id: WorkflowId, initialStepIndex = 0) => {
+      startWorkflow: async (id: WorkflowId, initialStepIndex = 0) => {
         const def = getWorkflow(id);
         const validIndex = Math.min(Math.max(0, initialStepIndex), def.steps.length - 1);
         set({
@@ -92,6 +93,19 @@ export const useWorkflowStore = create<WorkflowStore>()(
           completedStepIds: []
         });
         activateWorkflowEnvironment(id, validIndex);
+
+        // Initiate backend workflow session
+        try {
+          const { api } = await import("@/lib/api/client");
+          const sessionEnv = await api.startWorkflow(id);
+          if (sessionEnv?.session_id) {
+            set((s) => ({
+              context: { ...s.context, backendSessionId: sessionEnv.session_id }
+            }));
+          }
+        } catch (e) {
+          console.warn("Backend workflow session init warning:", e);
+        }
       },
 
       advanceStep: () => {

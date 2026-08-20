@@ -25,6 +25,12 @@ from ..engines.scoring.city_score import (ALGORITHM, ALGORITHM_VERSION,
 from ..engines.scoring.dimensions import PROFILE_VERSION, profile_from_weights
 from ..engines.scoring.package import generate_package
 from ..repositories import ResultsRepository, SpatialRepository
+# Imported from the module directly rather than through repositories/__init__,
+# for the same reason the scoring router imports this service directly: a
+# stale or partially-applied __init__ then cannot break the import chain and
+# take the whole app down with it.
+from ..repositories.region_repo import (FLOOD_BUFFER_M, REGIONAL_BOUNDS,
+                                        RegionRepository)
 
 PILOT = "adivali_devad"
 
@@ -59,6 +65,13 @@ class ScoringService:
             "facilities": self.repo.facilities(),
             "population_zones": self.repo.population_zones(),
         }
+
+    def _region_inputs(self, region: str) -> dict[str, Any]:
+        """Domain records for a comparison region's own `{region}_*` tables."""
+        bbox = REGIONAL_BOUNDS.get(region)
+        if bbox is None:
+            raise ValueError(f"unknown region '{region}'")
+        return RegionRepository(self.s, region, bbox).load()
 
     def _region_counts(self, region: str) -> dict[str, int]:
         """Row counts for a comparison region's own tables."""
@@ -125,32 +138,77 @@ class ScoringService:
                 benchmark_source=bench_source,
             )
             payload = scorecard_payload(result, region, bench_source)
+            payload["populationSource"] = "census/planning zones"
         else:
-            # Comparison regions carry geometry only: roads, buildings,
-            # water, bridges. There are no population zones or parcel
-            # attributes, so most dimensions are genuinely unmeasurable.
-            # Report that rather than fabricating inputs.
-            counts = self._region_counts(region)
-            prov = self._provenance(region, weights, {"tables": counts})
+            # Comparison regions are scored from their own extracted tables.
+            # Roads, land-use polygons and amenity points come straight from
+            # OSM; population is estimated from residential building
+            # footprints because no census layer exists for them. Every
+            # derived input is labelled in the payload so the UI can say what
+            # was measured and what was inferred.
+            data = self._region_inputs(region)
+            counts = data["counts"]
+            prov = self._provenance(region, weights, {
+                "tables": counts,
+                "analysisSrid": data["analysis_srid"],
+                "populationMethod": data["population_evidence"].get("method"),
+            })
+            graph = self._graph(data["roads"])
+            acc = self._accessibility(graph, data["facilities"],
+                                      data["population_zones"], prov)
             result = score_city(
                 region=region,
-                roads=[], parcels=[], facilities=[], population_zones=[],
-                provenance=prov, accessibility=None, graph=None,
+                roads=data["roads"], parcels=data["parcels"],
+                facilities=data["facilities"],
+                population_zones=data["population_zones"],
+                provenance=prov, accessibility=acc, graph=graph,
                 profile=profile_from_weights(weights),
                 benchmark_raw=reference_values(region),
                 benchmark_source="published",
             )
             payload = scorecard_payload(result, region, "published")
             payload["regionTables"] = counts
+            payload["analysisSrid"] = data["analysis_srid"]
+            payload["populationSource"] = "estimated from building footprints"
+            payload["populationEvidence"] = data["population_evidence"]
+            payload["derivedInputs"] = {
+                "population": "estimated from residential building footprints",
+                "floodRisk": f"proxy: within {FLOOD_BUFFER_M:.0f} m of mapped water",
+            }
+
+            warn = list(payload.get("warnings", []))
             if not counts:
-                payload["warnings"] = list(payload.get("warnings", [])) + [
+                warn.append(
                     f"No extracted tables for '{region}'. Run "
-                    f"`python db/extract.py {region}` to populate it."]
+                    f"`python db/extract.py {region}` to populate it.")
             else:
-                payload["warnings"] = list(payload.get("warnings", [])) + [
-                    f"'{region}' has geometry only ({', '.join(f'{k}: {v}' for k, v in counts.items())}); "
-                    "demographic and parcel attributes are not extracted for "
-                    "comparison regions, so most dimensions cannot be scored."]
+                missing = [ly for ly in ("facilities", "landuse")
+                           if not counts.get(ly)]
+                if missing:
+                    warn.append(
+                        f"'{region}' is missing the {', '.join(missing)} "
+                        f"layer(s), so the dimensions that depend on them "
+                        f"cannot be scored. Re-run "
+                        f"`python db/extract.py {region} --force` with the "
+                        f"current extractor to add them.")
+                if data["population_zones"]:
+                    ev = data["population_evidence"]
+                    warn.append(
+                        f"Population for '{region}' is ESTIMATED at "
+                        f"~{ev.get('estimatedPopulation'):,} from "
+                        f"{ev.get('buildingsResidential'):,} residential "
+                        f"building footprints ({ev.get('assumedFloors')} floors, "
+                        f"{ev.get('m2PerPerson')} m2/person), not a census "
+                        f"count. Per-capita dimensions inherit that uncertainty.")
+                else:
+                    warn.append(
+                        f"No buildings extracted for '{region}', so population "
+                        f"could not be estimated and per-capita dimensions "
+                        f"cannot be scored.")
+                warn.append(
+                    "Flood risk uses a distance-to-water proxy, not a "
+                    "hydrological model.")
+            payload["warnings"] = warn
 
         if persist:
             try:
@@ -176,9 +234,8 @@ class ScoringService:
             "budget": budget,
         })
 
-        data = self._pilot_inputs() if region == PILOT else {
-            "roads": [], "parcels": [], "facilities": [],
-            "population_zones": []}
+        data = (self._pilot_inputs() if region == PILOT
+                else self._region_inputs(region))
         graph = self._graph(data["roads"])
 
         result = generate_package(
@@ -257,7 +314,7 @@ class ScoringService:
                     for a in pkg.get("actions", [])),
                 # The decision metric planners actually argue about.
                 "costPerPoint": (round(cost / uplift) if uplift > 0 else None),
-                "actions": pkg.get("action", []),
+                "actions": pkg.get("actions", []),
                 "warnings": pkg.get("warnings", []),
             })
 

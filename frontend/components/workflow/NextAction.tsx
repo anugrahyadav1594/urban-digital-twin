@@ -41,14 +41,18 @@ export default function NextAction({
 
   const handlePrimaryClick = async () => {
     if (disabled) return;
-    if (onAction) {
-      await onAction();
-    }
-    if (targetWindow) {
-      openWindow(targetWindow);
-    }
-    if (autoAdvanceWorkflow && wf) {
-      advanceStep();
+    try {
+      if (onAction) {
+        await onAction();
+      }
+      if (targetWindow) {
+        openWindow(targetWindow);
+      }
+      if (autoAdvanceWorkflow && wf) {
+        advanceStep();
+      }
+    } catch (err) {
+      console.warn("Workflow action failed, step advance halted:", err);
     }
   };
 

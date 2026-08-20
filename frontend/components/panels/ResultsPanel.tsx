@@ -68,7 +68,7 @@ export default function ResultsPanel() {
     await addChange({
       type: "facility",
       label: `Candidate ${entity.label}`,
-      detail: `Suitability score ${entity.score.toFixed(1)}/100 · ${result.title}`,
+      detail: `${entity.score != null ? `Suitability score ${entity.score.toFixed(1)}/100` : entity.label} · ${result.title}`,
       object_id: Number(entity.entityId.replace(/[^0-9]/g, "")) || undefined,
       parameters: {
         score: entity.score,
@@ -138,7 +138,11 @@ export default function ResultsPanel() {
               ★ RECOMMENDED OPTION
             </span>
             <span className="chip good" style={{ fontSize: 10 }}>
-              Score: {topEntity.score.toFixed(1)} / 100
+              {topEntity.score != null
+                ? `Score: ${topEntity.score.toFixed(1)} / 100`
+                : topEntity.metrics?.coverage_ratio != null
+                ? `Coverage: ${(Number(topEntity.metrics.coverage_ratio) * 100).toFixed(1)}%`
+                : "Optimized Site"}
             </span>
           </div>
 
@@ -216,7 +220,7 @@ export default function ResultsPanel() {
                     fontWeight: i === 0 ? 700 : 500
                   }}
                 >
-                  {e.score.toFixed(1)}
+                  {e.score != null ? e.score.toFixed(1) : "Optimal"}
                 </td>
 
                 <td style={{ textAlign: "right" }}>
