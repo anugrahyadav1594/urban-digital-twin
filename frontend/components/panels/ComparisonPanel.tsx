@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
 import { SectionTitle, Empty } from "@/components/ui/Bits";
 import { useScenarioStore } from "@/stores/scenario-store";
+import { useWorkflowStore } from "@/stores/workflow-store";
 import NextAction from "@/components/workflow/NextAction";
+import WorkflowErrorState from "@/components/workflow/WorkflowErrorState";
 import type { AnalysisResult, ComparedScenario } from "@/types";
 
 export default function ComparisonPanel() {
@@ -12,7 +14,7 @@ export default function ComparisonPanel() {
   const [scenBId, setScenBId] = useState<string>("");
   const [comparisonResult, setComparisonResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | string | null>(null);
 
   useEffect(() => {
     if (scenarios.length >= 2) {
@@ -34,11 +36,38 @@ export default function ComparisonPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.compareScenarios([a, b]);
-      setComparisonResult(res);
+      const workflowStore = useWorkflowStore.getState();
+      let sessId = workflowStore.context.backendSessionId;
+      if (!sessId) {
+        const startRes = await api.startWorkflow("compare");
+        workflowStore.syncFromBackend(startRes);
+        sessId = startRes.session_id;
+      }
+
+      const evalRes = await api.compareEvaluate({
+        session_id: sessId,
+        scenario_ids: [a, b]
+      });
+
+      workflowStore.syncFromBackend(evalRes);
+
+      const compData = evalRes.data || {};
+      setComparisonResult({
+        resultId: evalRes.result_id || `res_comp_${Date.now()}`,
+        type: "scenario_comparison",
+        title: compData.title || `Scenario Comparison (${a} vs ${b})`,
+        datasetVersion: evalRes.provenance?.dataset_version || "v1",
+        scenarioVersion: `${a}_${b}`,
+        createdAt: new Date().toISOString(),
+        metrics: compData.metrics || [],
+        layers: [],
+        entities: compData.entities || [],
+        scenarios: compData.scenarios || [],
+        explanation: compData.explanation || `Evaluated trade-offs between Scenario ${a} and Scenario ${b}.`
+      });
     } catch (err: any) {
       console.error("Comparison failed:", err);
-      setError(err.message || "Failed to compare scenarios");
+      setError(err);
       setComparisonResult(null);
     } finally {
       setLoading(false);
@@ -76,6 +105,24 @@ export default function ComparisonPanel() {
     return val.toFixed(2);
   };
 
+  const selectWinner = async (selectedId: string) => {
+    const workflowStore = useWorkflowStore.getState();
+    let sessId = workflowStore.context.backendSessionId;
+    if (!sessId) {
+      const startRes = await api.startWorkflow("compare");
+      workflowStore.syncFromBackend(startRes);
+      sessId = startRes.session_id;
+    }
+
+    const selectRes = await api.compareSelect({
+      session_id: sessId,
+      selected_scenario_id: selectedId
+    });
+
+    workflowStore.syncFromBackend(selectRes);
+    setActive(selectedId);
+  };
+
   return (
     <div>
       <SectionTitle>Scenario Trade-off Matrix</SectionTitle>
@@ -102,9 +149,12 @@ export default function ComparisonPanel() {
       {loading && <Empty>Evaluating trade-off matrix on backend engine…</Empty>}
 
       {error && (
-        <div style={{ padding: 10, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 6, marginBottom: 12, fontSize: 12, color: "var(--warn)" }}>
-          Comparison warning: {error}
-        </div>
+        <WorkflowErrorState
+          error={error}
+          step="evaluate"
+          onRetry={() => runComparison(scenAId, scenBId)}
+          onBack={() => setError(null)}
+        />
       )}
 
       {comparisonResult && !loading && (
@@ -153,7 +203,7 @@ export default function ComparisonPanel() {
             <div className="row">
               <strong style={{ letterSpacing: ".1em" }}>RECOMMENDED → {(bestScen?.name || "SCENARIO A").toUpperCase()}</strong>
               {bestScen?.scenarioId && (
-                <button className="btn ghost" style={{ padding: "3px 8px" }} onClick={() => setActive(bestScen.scenarioId)}>
+                <button className="btn ghost" style={{ padding: "3px 8px" }} onClick={() => selectWinner(String(bestScen.scenarioId))}>
                   Make Active
                 </button>
               )}
@@ -167,8 +217,8 @@ export default function ComparisonPanel() {
             title="COMPARISON DECISION"
             prompt={`Engine recommended "${bestScen?.name || "Scenario A"}". Make it active to carry forward or export decision record.`}
             actionLabel={`Activate ${bestScen?.name || "Winning Plan"}`}
-            onAction={() => {
-              if (bestScen?.scenarioId) setActive(bestScen.scenarioId);
+            onAction={async () => {
+              if (bestScen?.scenarioId) await selectWinner(String(bestScen.scenarioId));
             }}
             targetWindow="results"
             secondaryActionLabel="Explain Rationale"

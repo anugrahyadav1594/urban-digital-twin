@@ -1,4 +1,5 @@
 /* ── Core domain types (mirror the backend contracts) ───────────────── */
+export * from "./workflow";
 
 export type CityInfo = {
   id: string;

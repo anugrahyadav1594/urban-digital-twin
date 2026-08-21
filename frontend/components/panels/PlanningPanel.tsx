@@ -10,6 +10,8 @@ import { useScenarioStore } from "@/stores/scenario-store";
 import { useWindowStore } from "@/stores/window-store";
 import { Field, SectionTitle } from "@/components/ui/Bits";
 import NextAction from "@/components/workflow/NextAction";
+import { useWorkflowStore } from "@/stores/workflow-store";
+import WorkflowErrorState from "@/components/workflow/WorkflowErrorState";
 import type { SuitabilityRequest, AnalysisResult } from "@/types";
 
 const TOOLS: { id: DrawMode; label: string }[] = [
@@ -38,6 +40,7 @@ export default function PlanningPanel() {
   const [roadProposalResult, setRoadProposalResult] = useState<AnalysisResult | null>(null);
   const [analyzingRoad, setAnalyzingRoad] = useState(false);
   const [roadError, setRoadError] = useState<string | null>(null);
+  const [suitabilityError, setSuitabilityError] = useState<Error | string | null>(null);
 
   const { drawMode, setDrawMode, drawnPath } = useMapStore();
   const { startJob, jobs } = useJobStore();
@@ -47,14 +50,72 @@ export default function PlanningPanel() {
   const activeScenario = scenarios.find((x) => x.id === activeId) ?? scenarios[0] ?? { id: "1", name: "Base City" };
   const busy = jobs.some((j) => j.state === "running");
 
-  const findSites = () => {
+  const findSites = async () => {
+    setSuitabilityError(null);
     openWindow("jobs");
     startJob(req.facility + " site suitability", "suitability", SUITABILITY_STAGES, async () => {
-      const result = await api.suitability(req, activeScenario);
-      addResult(result);
-      mapBridge.showCandidates(result.entities);
-      openWindow("analysis");
-      openWindow("results");
+      const workflowStore = useWorkflowStore.getState();
+      const activeScenId = activeScenario.id;
+      let sessId = workflowStore.context.backendSessionId;
+
+      if (!sessId) {
+        const startRes = await api.startWorkflow("plan", activeScenId);
+        workflowStore.syncFromBackend(startRes);
+        sessId = startRes.session_id;
+      }
+
+      try {
+        const candRes = await api.planCandidates({
+          session_id: sessId,
+          facility: req.facility,
+          capacity: req.capacity,
+          min_area: req.minArea,
+          max_travel_min: req.maxTravelMin,
+          flood_rule: req.floodRule,
+          weights: req.weights,
+          max_slope: req.maxSlope,
+          allowed_zoning: req.allowedZoning,
+          min_distance_same_type: req.minDistanceSameType,
+          service_radius: req.serviceRadius
+        });
+
+        workflowStore.syncFromBackend(candRes);
+
+        const resultData = candRes.data || {};
+        const records = resultData.records || [];
+        const entities = records.map((rec: any, idx: number) => ({
+          entityId: rec.parcel_id || rec.id || `cand_${idx}`,
+          label: rec.name || `Candidate #${idx + 1}`,
+          score: rec.score,
+          position: { lon: rec.lon ?? 73.14, lat: rec.lat ?? 19.0 },
+          breakdown: rec.breakdown,
+          metrics: rec.metrics
+        }));
+
+        const resultObj: AnalysisResult = {
+          resultId: candRes.result_id || `res_plan_${Date.now()}`,
+          type: "suitability",
+          title: `${req.facility} Site Suitability`,
+          datasetVersion: candRes.provenance?.dataset_version || "v1",
+          scenarioVersion: String(activeScenId),
+          createdAt: new Date().toISOString(),
+          metrics: resultData.metrics || [
+            { key: "top_score", label: "Top Score", value: records[0]?.score ? `${records[0].score.toFixed(1)}/100` : "N/A" },
+            { key: "candidates_found", label: "Candidates Evaluated", value: records.length }
+          ],
+          layers: [{ id: "candidates", type: "points", label: "Candidate Sites" }],
+          entities,
+          explanation: resultData.explanation || `Evaluated top ${records.length} candidate sites for ${req.facility} based on spatial constraints.`
+        };
+
+        addResult(resultObj);
+        if (records.length > 0) mapBridge.showCandidates(entities);
+        openWindow("results");
+      } catch (err: any) {
+        console.error("Site suitability workflow step failed:", err);
+        setSuitabilityError(err);
+        throw err;
+      }
     });
   };
 
@@ -193,6 +254,15 @@ export default function PlanningPanel() {
                   onChange={(e) => setReq({ ...req, allowedZoning: e.target.value.split(",").map((z) => z.trim()).filter(Boolean) })} />
               </Field>
             </div>
+          )}
+
+          {suitabilityError && (
+            <WorkflowErrorState
+              error={suitabilityError}
+              step="candidates"
+              onRetry={findSites}
+              onBack={() => setSuitabilityError(null)}
+            />
           )}
 
           <button className="btn primary wide" disabled={busy} onClick={findSites}>{busy ? "RUNNING…" : "FIND SITES"}</button>

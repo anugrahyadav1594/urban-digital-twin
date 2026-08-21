@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { useWorkflowStore } from "@/stores/workflow-store";
 import { useWindowStore, type WindowId } from "@/stores/window-store";
+import WorkflowErrorState from "./WorkflowErrorState";
 
 interface NextActionProps {
   title?: string;
@@ -28,19 +29,22 @@ export default function NextAction({
   secondaryActionLabel,
   onSecondaryAction,
   secondaryTargetWindow,
-  autoAdvanceWorkflow = true,
   badge,
   variant = "accent",
   disabled = false
 }: NextActionProps) {
-  const { advanceStep, currentWorkflow, currentStep } = useWorkflowStore();
+  const { currentWorkflow, currentStep } = useWorkflowStore();
   const openWindow = useWindowStore((s) => s.openWindow);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<Error | string | null>(null);
 
   const wf = currentWorkflow();
   const step = currentStep();
 
   const handlePrimaryClick = async () => {
-    if (disabled) return;
+    if (disabled || loading) return;
+    setError(null);
+    setLoading(true);
     try {
       if (onAction) {
         await onAction();
@@ -48,17 +52,22 @@ export default function NextAction({
       if (targetWindow) {
         openWindow(targetWindow);
       }
-      if (autoAdvanceWorkflow && wf) {
-        advanceStep();
-      }
-    } catch (err) {
-      console.warn("Workflow action failed, step advance halted:", err);
+    } catch (err: any) {
+      console.warn("Workflow action failed:", err);
+      setError(err);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleSecondaryClick = async () => {
     if (onSecondaryAction) {
-      await onSecondaryAction();
+      try {
+        await onSecondaryAction();
+      } catch (err: any) {
+        console.warn("Secondary workflow action failed:", err);
+        setError(err);
+      }
     }
     if (secondaryTargetWindow) {
       openWindow(secondaryTargetWindow);
@@ -128,6 +137,15 @@ export default function NextAction({
         {prompt}
       </div>
 
+      {error && (
+        <WorkflowErrorState
+          error={error}
+          step={step?.shortLabel}
+          onRetry={handlePrimaryClick}
+          onBack={() => setError(null)}
+        />
+      )}
+
       <div style={{ display: "flex", gap: 6 }}>
         <button
           className="btn primary"
@@ -139,9 +157,9 @@ export default function NextAction({
             letterSpacing: ".04em"
           }}
           onClick={handlePrimaryClick}
-          disabled={disabled}
+          disabled={disabled || loading}
         >
-          {actionLabel}
+          {loading ? "EXECUTING…" : actionLabel}
         </button>
 
         {secondaryActionLabel && (
@@ -152,6 +170,7 @@ export default function NextAction({
               fontSize: 11
             }}
             onClick={handleSecondaryClick}
+            disabled={loading}
           >
             {secondaryActionLabel}
           </button>

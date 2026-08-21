@@ -1,5 +1,6 @@
 "use client";
 
+import { api } from "@/lib/api/client";
 import { useSelectionStore } from "@/stores/selection-store";
 import { useWindowStore } from "@/stores/window-store";
 import { useScenarioStore } from "@/stores/scenario-store";
@@ -62,6 +63,24 @@ export default function InspectorPanel() {
   const zoning = String(feature.attributes.zoning || feature.attributes.zone || "N/A");
 
   const handleAddToScenario = async () => {
+    const { useWorkflowStore } = await import("@/stores/workflow-store");
+    const workflowStore = useWorkflowStore.getState();
+    const sessId = workflowStore.context.backendSessionId;
+
+    if (sessId && isCandidate) {
+      try {
+        const commitRes = await api.planCommit({
+          session_id: sessId,
+          candidate_id: feature.id,
+          proposal_type: isRoad ? "road" : "facility",
+          label: feature.name
+        });
+        workflowStore.syncFromBackend(commitRes);
+      } catch (e) {
+        console.warn("Backend commit notice:", e);
+      }
+    }
+
     await addChange({
       type: isRoad ? "road" : isFacility ? "facility" : "facility",
       label: `${feature.name} proposal`,
@@ -175,16 +194,22 @@ export default function InspectorPanel() {
         actionLabel={isCandidate ? "Validate Constraints" : isRoad ? "Analyze Network" : "Plan Facility Here"}
         onAction={async () => {
           if (isCandidate) {
-            try {
-              const { api } = await import("@/lib/api/client");
-              const { useWorkflowStore } = await import("@/stores/workflow-store");
-              const sessId = useWorkflowStore.getState().context.backendSessionId || "wf_sess_default";
-              const vRes = await api.planValidate({ session_id: sessId, candidate_id: feature.id });
-              if (vRes?.result) {
-                useWorkflowStore.getState().setContext({ activeCandidateId: feature.id, customData: vRes.result });
-              }
-            } catch (err) {
-              console.warn("Backend validation warning:", err);
+            const { api } = await import("@/lib/api/client");
+            const { useWorkflowStore } = await import("@/stores/workflow-store");
+            const workflowStore = useWorkflowStore.getState();
+            let sessId = workflowStore.context.backendSessionId;
+
+            if (!sessId) {
+              const startRes = await api.startWorkflow("plan", activeScenario?.id);
+              workflowStore.syncFromBackend(startRes);
+              sessId = startRes.session_id;
+            }
+
+            const vRes = await api.planValidate({ session_id: sessId, candidate_id: feature.id });
+            workflowStore.syncFromBackend(vRes);
+            if (vRes.status === "failed" || vRes.data?.status === "FAIL") {
+              const failed = vRes.data?.failed_rules?.join(", ") || "Validation constraints failed";
+              throw new Error(`Validation failed for candidate ${feature.name}: ${failed}`);
             }
             openWindow("analysis");
           } else if (isRoad) {

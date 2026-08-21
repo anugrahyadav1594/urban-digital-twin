@@ -17,6 +17,8 @@
 import { useState } from "react";
 import { api } from "@/lib/api/client";
 import { SectionTitle, Empty } from "@/components/ui/Bits";
+import { useWorkflowStore } from "@/stores/workflow-store";
+import WorkflowErrorState from "@/components/workflow/WorkflowErrorState";
 
 const PRIORITIES = [
   { key: "healthcare", label: "Healthcare" },
@@ -61,6 +63,28 @@ export default function DevelopmentPanel() {
   async function generate() {
     setBusy("pkg"); setErr(null); setCmp(null);
     try {
+      const workflowStore = useWorkflowStore.getState();
+      let sessId = workflowStore.context.backendSessionId;
+      if (!sessId) {
+        const startRes = await api.startWorkflow("improve");
+        workflowStore.syncFromBackend(startRes);
+        sessId = startRes.session_id;
+      }
+
+      const auditRes = await api.improveAudit(sessId);
+      workflowStore.syncFromBackend(auditRes);
+
+      const gapRes = await api.improveGaps({ session_id: sessId });
+      workflowStore.syncFromBackend(gapRes);
+
+      const pkgWfRes = await api.improvePackage({
+        session_id: sessId,
+        num_facilities: 3,
+        facility_type: picked.includes("healthcare") ? "hospital" : "school",
+        objective: "max_coverage"
+      });
+      workflowStore.syncFromBackend(pkgWfRes);
+
       const res = await api.developmentPackage({
         region: "adivali_devad",
         targetUplift: target,
@@ -76,6 +100,16 @@ export default function DevelopmentPanel() {
   async function compare() {
     setBusy("cmp"); setErr(null);
     try {
+      const workflowStore = useWorkflowStore.getState();
+      let sessId = workflowStore.context.backendSessionId;
+      if (sessId) {
+        const simRes = await api.improveSimulate(sessId);
+        workflowStore.syncFromBackend(simRes);
+
+        const compWfRes = await api.improveCompare(sessId);
+        workflowStore.syncFromBackend(compWfRes);
+      }
+
       const res = await api.comparePackages({
         region: "adivali_devad",
         variants: [

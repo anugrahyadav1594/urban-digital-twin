@@ -115,20 +115,21 @@ export default function WorkflowProgress() {
             {wf.steps.map((s, idx) => {
               const isCurrent = idx === currentStepIndex;
               const isCompleted = completedStepIds.includes(s.id);
-              const isPast = idx < currentStepIndex || isCompleted;
+              const isNavigable = idx <= currentStepIndex || isCompleted;
 
               return (
                 <div
                   key={s.id}
                   onClick={() => {
-                    if (idx <= currentStepIndex || completedStepIds.includes(s.id)) {
+                    if (isNavigable) {
                       jumpToStep(idx);
                     }
                   }}
                   style={{
                     padding: "6px 8px",
                     borderRadius: "6px",
-                    cursor: "pointer",
+                    cursor: isNavigable ? "pointer" : "not-allowed",
+                    opacity: isNavigable ? 1 : 0.45,
                     background: isCurrent
                       ? "rgba(56, 189, 248, 0.16)"
                       : isCompleted
@@ -141,7 +142,7 @@ export default function WorkflowProgress() {
                       : "1px solid var(--line)",
                     transition: "all 0.15s ease"
                   }}
-                  title={s.description}
+                  title={isNavigable ? s.description : `${s.description} (Complete current step to unlock)`}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
                     <span
@@ -168,7 +169,7 @@ export default function WorkflowProgress() {
                       style={{
                         fontSize: 11,
                         fontWeight: isCurrent ? 700 : 500,
-                        color: isCurrent ? "var(--txt)" : isPast ? "var(--txt-dim)" : "var(--txt-faint)",
+                        color: isCurrent ? "var(--txt)" : isNavigable ? "var(--txt-dim)" : "var(--txt-faint)",
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis"
@@ -211,13 +212,15 @@ export default function WorkflowProgress() {
                 >
                   ◀ Back
                 </button>
-                <button
-                  className="btn primary"
-                  style={{ fontSize: 10.5, padding: "3px 10px" }}
-                  onClick={advanceStep}
-                >
-                  {currentStepIndex === wf.steps.length - 1 ? "Complete Workflow ✓" : "Next Step ▶"}
-                </button>
+                {step.targetWindow && (
+                  <button
+                    className="btn primary"
+                    style={{ fontSize: 10.5, padding: "3px 10px" }}
+                    onClick={() => openWindow(step.targetWindow)}
+                  >
+                    Open Action Panel ↗
+                  </button>
+                )}
               </div>
             </div>
           )}

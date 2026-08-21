@@ -9,7 +9,13 @@ import { SCENARIOS, runAccessibility, runRisk, runSuitability } from "../mock";
 // is not exported by every version of mock.ts, and a named import for a
 // missing export is a hard compile error. This resolves at runtime instead.
 import * as mockFallbacks from "../mock";
-import type { AnalysisResult, CityInfo, FeatureRecord, Scenario, SuitabilityRequest, Layer, Job } from "@/types";
+import type {
+  AnalysisResult, CityInfo, FeatureRecord, Scenario, SuitabilityRequest, Layer, Job,
+  WorkflowId, WorkflowStepResult, DecisionRecord, StartWorkflowRequest, PlanCandidatesRequest,
+  PlanValidateRequest, PlanCommitRequest, StressSimulateRequest, StressRerouteRequest,
+  StressMitigateRequest, ImproveGapRequest, ImprovePackageRequest, CompareEvaluateRequest,
+  CompareSelectRequest, ExplainDecisionRequest
+} from "@/types";
 
 export const BACKEND_REQUIRED = process.env.NEXT_PUBLIC_BACKEND_REQUIRED !== "false";
 
@@ -126,6 +132,116 @@ async function postStrict(path: string, body: unknown): Promise<any> {
   }
   return res.json();
 }
+
+export function parseApiError(payload: any, status: number): Error {
+  if (!payload) return new Error(`HTTP ${status}`);
+  const errDetail = payload.detail ?? payload.error ?? payload;
+  if (typeof errDetail === "object" && errDetail !== null) {
+    if (errDetail.error && typeof errDetail.error === "object") {
+      const e = errDetail.error;
+      const msg = e.message || e.code || `HTTP ${status}`;
+      const err = new Error(msg);
+      (err as any).code = e.code;
+      (err as any).step = e.step;
+      (err as any).details = e.details;
+      return err;
+    }
+    const msg = errDetail.message || errDetail.error || JSON.stringify(errDetail);
+    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    if (errDetail.code) (err as any).code = errDetail.code;
+    if (errDetail.step) (err as any).step = errDetail.step;
+    if (errDetail.details) (err as any).details = errDetail.details;
+    return err;
+  }
+  return new Error(typeof errDetail === "string" ? errDetail : `HTTP ${status}`);
+}
+
+async function postWorkflow<TRequest, TResponse>(
+  path: string,
+  body: TRequest,
+  timeoutMs: number = T_ANALYSIS
+): Promise<TResponse> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(API_BASE + path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+      headers: { "content-type": "application/json" }
+    });
+
+    setBackendUp(true);
+
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      throw parseApiError(payload, response.status);
+    }
+
+    return payload as TResponse;
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Workflow request to ${path} timed out after ${timeoutMs} ms.`);
+    }
+    const msg = error?.message || "";
+    if (!msg.startsWith("HTTP ") && !msg.includes("timed out")) {
+      setBackendUp(false);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getWorkflow<TResponse>(
+  path: string,
+  timeoutMs: number = T_READ
+): Promise<TResponse> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(API_BASE + path, {
+      method: "GET",
+      signal: ctrl.signal,
+      headers: { "content-type": "application/json" }
+    });
+
+    setBackendUp(true);
+
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      throw parseApiError(payload, response.status);
+    }
+
+    return payload as TResponse;
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Workflow request to ${path} timed out.`);
+    }
+    const msg = error?.message || "";
+    if (!msg.startsWith("HTTP ")) {
+      setBackendUp(false);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 
 export const api = {
   getCity: async (): Promise<CityInfo> => (await tryFetch<CityInfo>("/city")) ?? CITY,
@@ -384,90 +500,62 @@ export const api = {
   // a session is started, steps are driven through it, and the session id
   // carries state between steps so each flow leads into the next decision.
   // --------------------------------------------------------------------------
-  startWorkflow: async (workflowId: string, scenarioId?: string | number): Promise<any> =>
-    (await tryFetch("/workflows/start", {
-      method: "POST",
-      body: JSON.stringify({ workflow_id: workflowId, scenario_id: scenarioId })
-    })) ?? null,
+  startWorkflow: async (
+    workflowId: WorkflowId,
+    scenarioId?: string | number,
+    initialContext?: Record<string, any>
+  ): Promise<WorkflowStepResult> =>
+    postWorkflow<StartWorkflowRequest, WorkflowStepResult>("/workflows/start", {
+      workflow_id: workflowId,
+      scenario_id: scenarioId,
+      initial_context: initialContext ?? {}
+    }),
 
-  getWorkflowSession: async (sessionId: string): Promise<any> =>
-    (await tryFetch(`/workflows/session/${sessionId}`)) ?? null,
+  getWorkflowSession: async (sessionId: string): Promise<WorkflowStepResult> =>
+    getWorkflow<WorkflowStepResult>(`/workflows/session/${sessionId}`),
 
-  planCandidates: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/plan/candidates", {
-      method: "POST",
-      body: JSON.stringify(req)
-    }, T_ANALYSIS)) ?? null,
+  planCandidates: async (req: PlanCandidatesRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<PlanCandidatesRequest, WorkflowStepResult>("/workflows/plan/candidates", req, T_ANALYSIS),
 
-  planValidate: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/plan/validate", {
-      method: "POST",
-      body: JSON.stringify(req)
-    })) ?? null,
+  planValidate: async (req: PlanValidateRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<PlanValidateRequest, WorkflowStepResult>("/workflows/plan/validate", req),
 
-  planCommit: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/plan/commit", {
-      method: "POST",
-      body: JSON.stringify(req)
-    })) ?? null,
+  planCommit: async (req: PlanCommitRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<PlanCommitRequest, WorkflowStepResult>("/workflows/plan/commit", req),
 
-  stressSimulate: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/stress/simulate", {
-      method: "POST",
-      body: JSON.stringify(req)
-    }, T_ANALYSIS)) ?? null,
+  stressSimulate: async (req: StressSimulateRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<StressSimulateRequest, WorkflowStepResult>("/workflows/stress/simulate", req, T_ANALYSIS),
 
-  stressReroute: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/stress/reroute", {
-      method: "POST",
-      body: JSON.stringify(req)
-    })) ?? null,
+  stressReroute: async (req: StressRerouteRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<StressRerouteRequest, WorkflowStepResult>("/workflows/stress/reroute", req, T_ANALYSIS),
 
-  stressMitigate: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/stress/mitigate", {
-      method: "POST",
-      body: JSON.stringify(req)
-    })) ?? null,
+  stressMitigate: async (req: StressMitigateRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<StressMitigateRequest, WorkflowStepResult>("/workflows/stress/mitigate", req),
 
-  improveAudit: async (sessionId: string): Promise<any> =>
-    (await tryFetch(`/workflows/improve/audit/${sessionId}`, { method: "POST" })) ?? null,
+  improveAudit: async (sessionId: string): Promise<WorkflowStepResult> =>
+    postWorkflow<Record<string, never>, WorkflowStepResult>(`/workflows/improve/audit/${sessionId}`, {}),
 
-  improveGaps: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/improve/gaps", {
-      method: "POST",
-      body: JSON.stringify(req)
-    })) ?? null,
+  improveGaps: async (req: ImproveGapRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<ImproveGapRequest, WorkflowStepResult>("/workflows/improve/gaps", req),
 
-  improvePackage: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/improve/package", {
-      method: "POST",
-      body: JSON.stringify(req)
-    })) ?? null,
+  improvePackage: async (req: ImprovePackageRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<ImprovePackageRequest, WorkflowStepResult>("/workflows/improve/package", req),
 
-  improveSimulate: async (sessionId: string): Promise<any> =>
-    (await tryFetch(`/workflows/improve/simulate/${sessionId}`, { method: "POST" })) ?? null,
+  improveSimulate: async (sessionId: string): Promise<WorkflowStepResult> =>
+    postWorkflow<Record<string, never>, WorkflowStepResult>(`/workflows/improve/simulate/${sessionId}`, {}),
 
-  improveCompare: async (sessionId: string): Promise<any> =>
-    (await tryFetch(`/workflows/improve/compare/${sessionId}`, { method: "POST" })) ?? null,
+  improveCompare: async (sessionId: string): Promise<WorkflowStepResult> =>
+    postWorkflow<Record<string, never>, WorkflowStepResult>(`/workflows/improve/compare/${sessionId}`, {}),
 
-  improveCommit: async (sessionId: string): Promise<any> =>
-    (await tryFetch(`/workflows/improve/commit/${sessionId}`, { method: "POST" })) ?? null,
+  improveCommit: async (sessionId: string): Promise<WorkflowStepResult> =>
+    postWorkflow<Record<string, never>, WorkflowStepResult>(`/workflows/improve/commit/${sessionId}`, {}),
 
-  compareEvaluate: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/compare/evaluate", {
-      method: "POST",
-      body: JSON.stringify(req)
-    }, T_ANALYSIS)) ?? null,
+  compareEvaluate: async (req: CompareEvaluateRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<CompareEvaluateRequest, WorkflowStepResult>("/workflows/compare/evaluate", req, T_ANALYSIS),
 
-  compareSelect: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/compare/select", {
-      method: "POST",
-      body: JSON.stringify(req)
-    })) ?? null,
+  compareSelect: async (req: CompareSelectRequest): Promise<WorkflowStepResult> =>
+    postWorkflow<CompareSelectRequest, WorkflowStepResult>("/workflows/compare/select", req),
 
-  explainDecisionRecord: async (req: any): Promise<any> =>
-    (await tryFetch("/workflows/explain/decision-record", {
-      method: "POST",
-      body: JSON.stringify(req)
-    })) ?? null,
+  explainDecisionRecord: async (req: ExplainDecisionRequest): Promise<DecisionRecord> =>
+    postWorkflow<ExplainDecisionRequest, DecisionRecord>("/workflows/explain/decision-record", req),
 };

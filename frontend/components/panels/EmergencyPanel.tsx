@@ -4,8 +4,10 @@ import { api } from "@/lib/api/client";
 import { mapBridge } from "@/cesium/map-bridge";
 import { useMapStore } from "@/stores/map-store";
 import { useScenarioStore } from "@/stores/scenario-store";
+import { useWorkflowStore } from "@/stores/workflow-store";
 import { Field, SectionTitle } from "@/components/ui/Bits";
 import NextAction from "@/components/workflow/NextAction";
+import WorkflowErrorState from "@/components/workflow/WorkflowErrorState";
 
 type Hazard = { id: string; label: string; defaultRadiusM: number; responderType: string };
 type Measure = {
@@ -41,7 +43,7 @@ export default function EmergencyPanel() {
   const [tab, setTab] = useState<"route" | "disaster">("route");
   const [cat, setCat] = useState<{ hazards: Hazard[]; measures: Measure[] }>({ hazards: [], measures: [] });
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<Error | string | null>(null);
 
   // Incident location. Defaults to the city centre; "pick on map" overwrites it.
   const [lon, setLon] = useState(73.135);
@@ -60,9 +62,6 @@ export default function EmergencyPanel() {
 
   const activeScenario = useScenarioStore((s) => s.scenarios.find((x) => x.id === s.activeId));
   const picked = useMapStore((s) => s.lastClick);
-  // Picking is armed explicitly. Previously ANY map click silently moved the
-  // incident, so selecting a building to inspect it also changed the thing you
-  // were about to route to.
   const [picking, setPicking] = useState(false);
 
   useEffect(() => {
@@ -72,10 +71,8 @@ export default function EmergencyPanel() {
         setHazardType(c.hazards[0].id);
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // If the map store exposes a last-clicked coordinate, offer it as the incident.
   useEffect(() => {
     if (!picking) return;
     if (picked && typeof picked.lon === "number" && typeof picked.lat === "number") {
@@ -92,20 +89,27 @@ export default function EmergencyPanel() {
   const toggleMeasure = (id: string) =>
     setMeasures((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  /** Route under the blockages produced by the last simulation, if asked. */
   const runRoute = async (useHazard = false) => {
     setBusy(true); setErr(null);
     if (!useHazard) setSim(null);
     try {
-      const blocked: string[] = useHazard ? (sim?.network?.blocked_ids ?? []) : [];
-      const slowed: string[] = useHazard ? (sim?.network?.slowed_ids ?? []) : [];
-      const out = await api.emergencyRoute({
-        lon, lat, responderType: responder, topN: 3,
-        turnoutSeconds: turnout, responseTargetSeconds: targetMin * 60,
-        blockedRoadIds: blocked, slowedRoadIds: slowed,
-        scenario_id: activeScenario?.id
+      const workflowStore = useWorkflowStore.getState();
+      let sessId = workflowStore.context.backendSessionId;
+      if (!sessId) {
+        const startRes = await api.startWorkflow("stress", activeScenario?.id);
+        workflowStore.syncFromBackend(startRes);
+        sessId = startRes.session_id;
+      }
+
+      const routeWfRes = await api.stressReroute({
+        session_id: sessId,
+        responder_type: responder,
+        target_min: targetMin
       });
-      if (!out) { setErr("No route data returned."); setRoutes(null); return; }
+
+      workflowStore.syncFromBackend(routeWfRes);
+
+      const out = routeWfRes.data || {};
       const recs = out.records ?? [];
       setRoutes(recs);
       mapBridge.showHazard({ center: [lon, lat], label: "Incident" });
@@ -117,25 +121,36 @@ export default function EmergencyPanel() {
       mapBridge.showNetworkImpact(null);
       if (out.warnings?.length) setErr(out.warnings.join(" "));
     } catch (e: any) {
-      setErr(String(e?.message ?? e));
+      setErr(e);
     } finally { setBusy(false); }
   };
 
   const runSim = async () => {
     setBusy(true); setErr(null); setRoutes(null);
     try {
-      const out = await api.simulateDisaster({
-        hazardType, lon, lat,
-        radiusM: radius === "" ? null : Number(radius),
-        intensity, measures,
-        responseTargetSeconds: targetMin * 60,
-        includeRouting: true,
-        scenario_id: activeScenario?.id
+      const workflowStore = useWorkflowStore.getState();
+      let sessId = workflowStore.context.backendSessionId;
+      if (!sessId) {
+        const startRes = await api.startWorkflow("stress", activeScenario?.id);
+        workflowStore.syncFromBackend(startRes);
+        sessId = startRes.session_id;
+      }
+
+      const simWfRes = await api.stressSimulate({
+        session_id: sessId,
+        hazard_type: hazardType,
+        lon,
+        lat,
+        radius_m: radius === "" ? null : Number(radius),
+        intensity,
+        measures
       });
-      if (!out) { setErr("No simulation data returned."); return; }
+
+      workflowStore.syncFromBackend(simWfRes);
+
+      const out = simWfRes.data;
+      if (!out) { setErr("No simulation data returned from backend."); return; }
       setSim(out);
-      // Exposure can succeed while response routing fails; say so rather than
-      // showing an empty dispatch table with no explanation.
       if (out.response?.error) setErr(out.response.error);
       else if (out.persist_error) setErr(`Result not saved: ${out.persist_error}`);
       mapBridge.showHazard({
@@ -154,11 +169,9 @@ export default function EmergencyPanel() {
       } else {
         mapBridge.showEmergencyRoutes([]);
       }
-      // Closed / slowed / reopened roads, so the disruption is visible on the
-      // globe rather than only as counts in the table.
       mapBridge.showNetworkImpact(out.network ?? null);
     } catch (e: any) {
-      setErr(String(e?.message ?? e));
+      setErr(e);
     } finally { setBusy(false); }
   };
 
@@ -442,6 +455,20 @@ export default function EmergencyPanel() {
                 prompt="Disaster simulation complete. Save applied mitigation measures to your scenario or compare with baseline."
                 actionLabel="Save Mitigations to Scenario"
                 onAction={async () => {
+                  const workflowStore = useWorkflowStore.getState();
+                  let sessId = workflowStore.context.backendSessionId;
+                  if (!sessId) {
+                    const startRes = await api.startWorkflow("stress", activeScenario?.id);
+                    workflowStore.syncFromBackend(startRes);
+                    sessId = startRes.session_id;
+                  }
+
+                  const mitRes = await api.stressMitigate({
+                    session_id: sessId,
+                    measures
+                  });
+                  workflowStore.syncFromBackend(mitRes);
+
                   if (measures.length > 0) {
                     const scStore = useScenarioStore.getState();
                     for (const mId of measures) {
@@ -476,7 +503,12 @@ export default function EmergencyPanel() {
       )}
 
       {err && (
-        <div style={{ marginTop: 10, fontSize: 11, color: "var(--warn)" }}>{err}</div>
+        <WorkflowErrorState
+          error={err}
+          step={tab}
+          onRetry={() => (tab === "route" ? runRoute(false) : runSim())}
+          onBack={() => setErr(null)}
+        />
       )}
 
       <button className="btn ghost wide" style={{ marginTop: 10 }}

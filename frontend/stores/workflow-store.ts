@@ -2,10 +2,10 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { WORKFLOWS, type WorkflowDef, type WorkflowId, type WorkflowStepDef, getWorkflow } from "@/lib/workflows";
+import { WORKFLOWS, type WorkflowDef, type WorkflowId, type WorkflowStepDef, getWorkflow, BACKEND_TO_FRONTEND_STEP_MAP } from "@/lib/workflows";
 import { useWindowStore } from "./window-store";
 import { useLayerStore } from "./layer-store";
-import type { LayerKind } from "@/types";
+import type { LayerKind, WorkflowStepResult } from "@/types";
 
 export type WorkflowContext = {
   backendSessionId?: string;
@@ -28,6 +28,7 @@ type WorkflowStore = {
   currentStep: () => WorkflowStepDef | null;
 
   startWorkflow: (id: WorkflowId, initialStepIndex?: number) => Promise<void>;
+  syncFromBackend: (res: WorkflowStepResult) => void;
   advanceStep: () => void;
   prevStep: () => void;
   jumpToStep: (stepIdOrIndex: string | number) => void;
@@ -98,15 +99,57 @@ export const useWorkflowStore = create<WorkflowStore>()(
         try {
           const { api } = await import("@/lib/api/client");
           const sessionEnv = await api.startWorkflow(id);
-          if (sessionEnv?.session_id) {
-            set((s) => ({
-              context: { ...s.context, backendSessionId: sessionEnv.session_id }
-            }));
+          if (sessionEnv) {
+            get().syncFromBackend(sessionEnv);
           }
         } catch (e) {
-          console.warn("Backend workflow session init warning:", e);
+          console.warn("Backend workflow session init notice:", e);
         }
       },
+
+      syncFromBackend: (res: WorkflowStepResult) => {
+        if (!res || !res.workflow_id) return;
+        const wfId = res.workflow_id as WorkflowId;
+        const def = getWorkflow(wfId);
+        if (!def) return;
+
+        const backendStep = res.step_id;
+        const mappedStep = BACKEND_TO_FRONTEND_STEP_MAP[wfId]?.[backendStep] ?? backendStep;
+        const stepIndex = def.steps.findIndex((s) => s.id === mappedStep);
+
+        const { completedStepIds, context } = get();
+
+        // Also map any backend completed steps if returned
+        const newCompleted = [...completedStepIds];
+        if (mappedStep && !newCompleted.includes(mappedStep) && res.status === "complete") {
+          newCompleted.push(mappedStep);
+        }
+
+        const newContext: WorkflowContext = {
+          ...context,
+          backendSessionId: res.session_id,
+          activeResultId: res.result_id ?? context.activeResultId
+        };
+
+        if (res.data) {
+          if (res.data.records?.[0]?.id || res.data.records?.[0]?.parcel_id) {
+            const topId = res.data.records[0].parcel_id || res.data.records[0].id;
+            if (topId) newContext.activeCandidateId = topId;
+          }
+        }
+
+        set({
+          activeWorkflowId: wfId,
+          currentStepIndex: stepIndex >= 0 ? stepIndex : get().currentStepIndex,
+          completedStepIds: newCompleted,
+          context: newContext
+        });
+
+        if (stepIndex >= 0) {
+          activateWorkflowEnvironment(wfId, stepIndex);
+        }
+      },
+
 
       advanceStep: () => {
         const { activeWorkflowId, currentStepIndex, completedStepIds } = get();

@@ -38,7 +38,7 @@ export type WindowDef = {
 export const WINDOW_REGISTRY: Record<WindowId, WindowDef> = {
   city:       { title: "City Information",   icon: "◈", defaultSize: { width: 340, height: 420 }, minSize: { width: 280, height: 260 }, defaultPos: { x: 24, y: 70 } },
   layers:     { title: "Layers",             icon: "≣", defaultSize: { width: 320, height: 500 }, minSize: { width: 260, height: 300 }, defaultPos: { x: 24, y: 70 } },
-  legend:     { title: "Legend",             icon: "▦", def: { width: 280, height: 330 }, minSize: { width: 220, height: 220 }, defaultPos: { x: 24, y: 590 } },
+  legend:     { title: "Legend",             icon: "▦", defaultSize: { width: 280, height: 330 }, minSize: { width: 220, height: 220 }, defaultPos: { x: 24, y: 590 } },
   inspector:  { title: "Object Inspector",   icon: "◎", defaultSize: { width: 360, height: 500 }, minSize: { width: 300, height: 350 }, defaultPos: { x: -390, y: 70 } },
   scenario:   { title: "Scenario Manager",   icon: "⌘", defaultSize: { width: 380, height: 460 }, minSize: { width: 320, height: 300 }, defaultPos: { x: 370, y: 90 } },
   changes:    { title: "Scenario Changes",   icon: "≡", defaultSize: { width: 380, height: 360 }, minSize: { width: 300, height: 240 }, defaultPos: { x: 400, y: 420 } },
@@ -78,6 +78,7 @@ type Store = {
   moveWindow: (id: WindowId, x: number, y: number) => void;
   resizeWindow: (id: WindowId, r: { x: number; y: number; width: number; height: number }) => void;
   minimizeWindow: (id: WindowId) => void;
+  restoreWindow: (id: WindowId) => void;
   maximizeWindow: (id: WindowId) => void;
   pinWindow: (id: WindowId, pin: Pin) => void;
   resetWindow: (id: WindowId) => void;
@@ -292,7 +293,7 @@ export const useWindowStore = create<Store>()(
           };
         }),
 
-      restoreWindow: (id) =>
+      restoreWindow: (id: WindowId) =>
         set((s) => ({ windows: { ...s.windows, [id]: { ...s.windows[id], minimized: false, maximized: false, pin: "none" } }, activeId: id })),
 
       pinWindow: (id, pin) =>

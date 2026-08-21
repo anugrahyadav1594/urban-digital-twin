@@ -32,7 +32,7 @@ export default function AIPanel() {
 
   useEffect(() => { logRef.current?.scrollTo({ top: 1e6, behavior: "smooth" }); }, [messages, thinking]);
 
-  const explainActiveResult = () => {
+  const explainActiveResult = async () => {
     if (!activeResult) {
       push({
         role: "assistant",
@@ -41,30 +41,53 @@ export default function AIPanel() {
       return;
     }
 
-    const top = activeResult.entities?.[0];
-    const metricsSummary = activeResult.metrics.map((m) => `${m.label}: ${m.value}${m.unit ? " " + m.unit : ""}`).join("\n• ");
+    setThinking(true);
+    try {
+      const { useWorkflowStore } = await import("@/stores/workflow-store");
+      const workflowStore = useWorkflowStore.getState();
+      let sessId = workflowStore.context.backendSessionId;
+      if (!sessId) {
+        const startRes = await api.startWorkflow("explain", scenario.id);
+        workflowStore.syncFromBackend(startRes);
+        sessId = startRes.session_id;
+      }
 
-    const explanationText = `### Grounded Decision Record: ${activeResult.title}
+      const rec = await api.explainDecisionRecord({
+        session_id: sessId,
+        result_id: activeResult.resultId,
+        scenario_id: scenario.id
+      });
 
-**Primary Recommendation:** ${top ? `${top.label}${top.score != null ? ` (Score: ${top.score.toFixed(1)}/100)` : ""}` : "N/A"}
-**Dataset Version:** \`${activeResult.datasetVersion}\` | **Scenario Version:** \`${activeResult.scenarioVersion}\`
+      const scoreBreakdownText = Object.entries(rec.score_breakdown || {})
+        .map(([k, v]) => `${k}: ${v.toFixed(1)}`)
+        .join("\n• ");
 
-#### Engine Metrics & KPIs:
-• ${metricsSummary || "Standard criteria evaluated."}
+      const explanationText = `### Grounded Decision Record
 
-#### Decision Rationale:
-${activeResult.explanation || "Selected based on optimal balance between travel time reduction, flood safety exclusion, and land area suitability."}
+**Primary Recommendation:** ${rec.recommendation || "N/A"}
+${rec.overall_score != null ? `**Overall Composite Score:** ${rec.overall_score.toFixed(1)} / 100\n` : ""}
+**Dataset Version:** \`${rec.provenance?.dataset_version || "v1"}\` | **Scenario Version:** \`${rec.scenario_id || scenario.id}\`
 
-#### Assumptions & Limitations:
-• Distances calculated using network shortest path.
-• Flood exclusions governed by 100-year return period hazard footprint.
-• Population figures sourced from census ward aggregates.`;
+${scoreBreakdownText ? `#### Criteria Score Breakdown:\n• ${scoreBreakdownText}\n` : ""}
+${rec.benefits?.length ? `#### Benefits:\n• ${rec.benefits.join("\n• ")}\n` : ""}
+${rec.tradeoffs?.length ? `#### Trade-offs:\n• ${rec.tradeoffs.join("\n• ")}\n` : ""}
+${rec.assumptions?.length ? `#### Assumptions & Rules:\n• ${rec.assumptions.join("\n• ")}\n` : ""}
+${rec.limitations?.length ? `#### Limitations:\n• ${rec.limitations.join("\n• ")}` : ""}`;
 
-    push({
-      role: "assistant",
-      resultId: activeResult.resultId,
-      text: explanationText
-    });
+      push({
+        role: "assistant",
+        resultId: activeResult.resultId,
+        text: explanationText
+      });
+    } catch (err: any) {
+      console.error("Explain decision record failed:", err);
+      push({
+        role: "assistant",
+        text: `Failed to generate decision record from backend: ${err.message || "Unknown backend error"}`
+      });
+    } finally {
+      setThinking(false);
+    }
   };
 
   const ask = async (q: string) => {

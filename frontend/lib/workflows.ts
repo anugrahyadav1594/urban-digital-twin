@@ -34,6 +34,43 @@ export type WorkflowDef = {
   steps: WorkflowStepDef[];
 };
 
+export const BACKEND_TO_FRONTEND_STEP_MAP: Record<WorkflowId, Record<string, string>> = {
+  plan: {
+    requirement: "requirement",
+    candidates: "candidates",
+    validate: "validate",
+    commit: "save"
+  },
+  stress: {
+    scenario: "scenario",
+    simulate: "hazard",
+    impact: "blocked",
+    reroute: "reroute",
+    mitigate: "mitigate"
+  },
+  improve: {
+    audit: "score",
+    gaps: "gaps",
+    package: "package",
+    simulate: "simulate",
+    compare: "compare",
+    commit: "compare"
+  },
+  compare: {
+    variants: "variants",
+    evaluate: "metrics",
+    compare: "compare",
+    select: "decision"
+  },
+  explain: {
+    recommendation: "recommendation",
+    breakdown: "breakdown",
+    assumptions: "assumptions",
+    population: "population",
+    rationale: "reasons"
+  }
+};
+
 export const WORKFLOWS: Record<WorkflowId, WorkflowDef> = {
   plan: {
     id: "plan",
