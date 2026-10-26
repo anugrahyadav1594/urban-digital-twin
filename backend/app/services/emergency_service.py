@@ -81,7 +81,7 @@ class EmergencyService:
         if not stations:
             return {"error": f"no '{responder_type}' facilities in the database"}
 
-        G = build_graph(roads, mode="emergency")
+        G = build_graph(roads, mode="emergency", node_network=(len(roads) <= 600))
         stats = {}
         if blocked_road_ids or slowed_road_ids:
             G, stats = degrade_graph(
@@ -284,7 +284,7 @@ class EmergencyService:
             return {"error": "insufficient data for response routing",
                     "responder_type": responder_type}
 
-        G = build_graph(roads, mode="emergency")
+        G = build_graph(roads, mode="emergency", node_network=(len(roads) <= 600))
         incident = self._point(lon, lat)
         prov = self._prov("network.emergency_routing",
                           {"responder_type": responder_type,
@@ -428,3 +428,7 @@ class EmergencyService:
                 for k, v in sorted(MEASURES.items())
             ],
         }
+
+    # Workflow orchestrator aliases (keeps workflow step names & unit test mocks aligned)
+    simulate_disaster = simulate
+    calculate_emergency_route = find_route

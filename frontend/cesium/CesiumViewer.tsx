@@ -202,9 +202,9 @@ export default function CesiumViewer() {
             ? undefined
             : Cesium.ImageryLayer.fromProviderAsync(
               Promise.resolve(new Cesium.UrlTemplateImageryProvider({
-                url: "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-                credit: "© OpenStreetMap contributors, © CARTO",
-                maximumLevel: 20
+                url: "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+                credit: "Esri, HERE, Garmin, © OpenStreetMap contributors",
+                maximumLevel: 16
               })),
               {}
             ),

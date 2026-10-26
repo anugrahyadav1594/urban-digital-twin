@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api/client";
+import { api, isDemoMode } from "@/lib/api/client";
 import { mapBridge } from "@/cesium/map-bridge";
+import { STUDY_AREAS, compareRoutesOnGraph } from "@/lib/routing-engine";
 import { useMapStore } from "@/stores/map-store";
+import { useRouteAnalysisStore } from "@/stores/route-analysis-store";
 import { useScenarioStore } from "@/stores/scenario-store";
 import { useWorkflowStore } from "@/stores/workflow-store";
 import { Field, SectionTitle } from "@/components/ui/Bits";
@@ -13,6 +15,20 @@ type Hazard = { id: string; label: string; defaultRadiusM: number; responderType
 type Measure = {
   id: string; label: string; reduces: string; effect: number;
   appliesTo: string[]; note: string;
+};
+
+const FALLBACK_CATALOGUE: { hazards: Hazard[]; measures: Measure[] } = {
+  hazards: [
+    { id: "flood", label: "Urban Flood", defaultRadiusM: 450, responderType: "fire_station" },
+    { id: "fire", label: "Major Structural Fire", defaultRadiusM: 250, responderType: "fire_station" },
+    { id: "chemical", label: "Industrial Hazmat Release", defaultRadiusM: 600, responderType: "hospital" },
+    { id: "cyclone", label: "Cyclone / Severe Storm", defaultRadiusM: 800, responderType: "fire_station" },
+  ],
+  measures: [
+    { id: "stormwater_drainage", label: "Stormwater Drainage Upgrade", reduces: "hazard_radius", effect: 25, appliesTo: ["flood", "cyclone"], note: "Reduces flood inundation extent" },
+    { id: "firebreaks_hydrants", label: "Hydrant Network Expansion", reduces: "severity", effect: 30, appliesTo: ["fire"], note: "Lowers severe structural exposure" },
+    { id: "road_redundancy", label: "Emergency Corridor Hardening", reduces: "road_closures", effect: 40, appliesTo: [], note: "Keeps priority corridors passable" },
+  ],
 };
 
 const fmtMin = (s: number | undefined) =>
@@ -66,11 +82,13 @@ export default function EmergencyPanel() {
 
   useEffect(() => {
     api.emergencyCatalogue().then((c) => {
-      setCat(c);
-      if (c?.hazards?.length && !c.hazards.find((h: Hazard) => h.id === hazardType)) {
-        setHazardType(c.hazards[0].id);
+      const resolved = c?.hazards?.length ? c : FALLBACK_CATALOGUE;
+      setCat(resolved);
+      if (resolved.hazards.length && !resolved.hazards.find((h: Hazard) => h.id === hazardType)) {
+        setHazardType(resolved.hazards[0].id);
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -89,28 +107,138 @@ export default function EmergencyPanel() {
   const toggleMeasure = (id: string) =>
     setMeasures((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
+  const ensureStressSession = async (forceNew = false): Promise<string> => {
+    const workflowStore = useWorkflowStore.getState();
+    if (
+      !forceNew &&
+      workflowStore.activeWorkflowId === "stress" &&
+      workflowStore.context.backendSessionId
+    ) {
+      return workflowStore.context.backendSessionId;
+    }
+    const startRes = await api.startWorkflow("stress", activeScenario?.id);
+    workflowStore.syncFromBackend(startRes);
+    return startRes.session_id;
+  };
+
+  const computeOfflineDemoResponderRoutes = () => {
+    const raState = useRouteAnalysisStore.getState();
+    const areaDef = STUDY_AREAS[raState.studyAreaId];
+    const ds = raState.datasets[raState.studyAreaId];
+    const builtGraph = raState.graphs[raState.studyAreaId];
+    if (!ds || !builtGraph || !areaDef) {
+      throw new Error("Study-area road network is still loading. Try again in a moment.");
+    }
+    const candidates = ds.landmarks.filter((lm) =>
+      responder === "hospital"
+        ? lm.category === "hospital" || lm.category === "clinic"
+        : responder === "fire_station"
+        ? lm.category === "fire_station" || lm.category === "emergency" || lm.name.toLowerCase().includes("fire")
+        : lm.category === responder
+    );
+    if (!candidates.length) {
+      return {
+        records: [],
+        warnings: [
+          `Demo dataset '${areaDef.name}' has no mapped '${responder}' facility — switch service to Hospital / ambulance or Fire station.`,
+        ],
+      };
+    }
+
+    const scored: any[] = [];
+    for (const fac of candidates.slice(0, 12)) {
+      const cmp = compareRoutesOnGraph({
+        graph: builtGraph,
+        studyArea: areaDef,
+        origin: { lon: fac.lon, lat: fac.lat, label: fac.name, source: "landmark" },
+        destination: { lon, lat, label: "Incident", source: "coordinates" },
+        scenario: {
+          ...raState.draftScenario,
+          active: false,
+        },
+        costMetric: "time",
+        dataMode: "demo",
+      });
+      if (cmp.baselineRoute.feasible && cmp.baselineRoute.travelTimeS !== null) {
+        const totalSec = cmp.baselineRoute.travelTimeS + turnout;
+        const respMin = totalSec / 60;
+        scored.push({
+          station_id: fac.id,
+          station_name: `${fac.name} (Demo OSM)`,
+          distance_m: cmp.baselineRoute.distanceM ?? 0,
+          response_time_min: respMin,
+          within_target: respMin <= targetMin,
+          path: cmp.baselineRoute.path,
+          incident_snap_distance_m: cmp.baselineRoute.snapDestinationM,
+        });
+      }
+    }
+    scored.sort((a, b) => a.response_time_min - b.response_time_min);
+    const top = scored.slice(0, 3).map((r, idx) => ({
+      ...r,
+      rank: idx + 1,
+      is_primary: idx === 0,
+    }));
+    return {
+      records: top,
+      warnings: ["Computed offline over bundled OpenStreetMap graph (Demo Mode)."],
+    };
+  };
+
   const runRoute = async (useHazard = false) => {
     setBusy(true); setErr(null);
     if (!useHazard) setSim(null);
     try {
+      let out: any = null;
       const workflowStore = useWorkflowStore.getState();
-      let sessId = workflowStore.context.backendSessionId;
-      if (!sessId) {
-        const startRes = await api.startWorkflow("stress", activeScenario?.id);
-        workflowStore.syncFromBackend(startRes);
-        sessId = startRes.session_id;
+
+      if (isDemoMode()) {
+        out = computeOfflineDemoResponderRoutes();
+      } else if (
+        useHazard &&
+        workflowStore.activeWorkflowId === "stress" &&
+        workflowStore.context.backendSessionId &&
+        workflowStore.completedStepIds.includes("simulate")
+      ) {
+        try {
+          const routeWfRes = await api.stressReroute({
+            session_id: workflowStore.context.backendSessionId,
+            responder_type: responder,
+            target_min: targetMin
+          });
+          workflowStore.syncFromBackend(routeWfRes);
+          out = routeWfRes.data || {};
+        } catch {
+          // Session expired on backend reload — fall back to direct PostGIS route endpoint
+          out = await api.emergencyRoute({
+            lon,
+            lat,
+            responderType: responder,
+            topN: 3,
+            turnoutSeconds: turnout,
+            responseTargetSeconds: targetMin * 60,
+            blockedRoadIds: sim?.network?.blocked_ids ?? [],
+            slowedRoadIds: sim?.network?.slowed_ids ?? [],
+            scenario_id: activeScenario?.id
+          });
+        }
+      } else {
+        // Standalone responder dispatch: query /api/v1/emergency/route directly
+        // without requiring a prior 'simulate' workflow step.
+        out = await api.emergencyRoute({
+          lon,
+          lat,
+          responderType: responder,
+          topN: 3,
+          turnoutSeconds: turnout,
+          responseTargetSeconds: targetMin * 60,
+          blockedRoadIds: useHazard ? (sim?.network?.blocked_ids ?? []) : [],
+          slowedRoadIds: useHazard ? (sim?.network?.slowed_ids ?? []) : [],
+          scenario_id: activeScenario?.id
+        });
       }
 
-      const routeWfRes = await api.stressReroute({
-        session_id: sessId,
-        responder_type: responder,
-        target_min: targetMin
-      });
-
-      workflowStore.syncFromBackend(routeWfRes);
-
-      const out = routeWfRes.data || {};
-      const recs = out.records ?? [];
+      const recs = out?.records ?? [];
       setRoutes(recs);
       mapBridge.showHazard({ center: [lon, lat], label: "Incident" });
       mapBridge.showEmergencyRoutes(recs.map((r: any) => ({
@@ -118,33 +246,63 @@ export default function EmergencyPanel() {
         responseTimeMin: r.response_time_min, isPrimary: r.is_primary,
         withinTarget: r.within_target
       })));
-      mapBridge.showNetworkImpact(null);
-      if (out.warnings?.length) setErr(out.warnings.join(" "));
+      if (!useHazard) mapBridge.showNetworkImpact(null);
     } catch (e: any) {
-      setErr(e);
+      const msg = String(e?.message || e || "");
+      if (msg.includes("no '") && msg.includes("facilities in the database")) {
+        setRoutes([]);
+        setErr(null);
+      } else {
+        setErr(e);
+      }
     } finally { setBusy(false); }
   };
 
   const runSim = async () => {
     setBusy(true); setErr(null); setRoutes(null);
     try {
-      const workflowStore = useWorkflowStore.getState();
-      let sessId = workflowStore.context.backendSessionId;
-      if (!sessId) {
-        const startRes = await api.startWorkflow("stress", activeScenario?.id);
-        workflowStore.syncFromBackend(startRes);
-        sessId = startRes.session_id;
+      if (isDemoMode()) {
+        throw new Error(
+          "Full building/population exposure simulation requires Live PostGIS mode. Start the FastAPI + PostGIS backend, or use the main Guided Route Workflow panel on the left for offline Demo Mode route comparison."
+        );
       }
+      const workflowStore = useWorkflowStore.getState();
+      let sessId = await ensureStressSession(false);
 
-      const simWfRes = await api.stressSimulate({
-        session_id: sessId,
-        hazard_type: hazardType,
-        lon,
-        lat,
-        radius_m: radius === "" ? null : Number(radius),
-        intensity,
-        measures
-      });
+      let simWfRes;
+      try {
+        simWfRes = await api.stressSimulate({
+          session_id: sessId,
+          hazard_type: hazardType,
+          lon,
+          lat,
+          radius_m: radius === "" ? null : Number(radius),
+          intensity,
+          measures
+        });
+      } catch (innerErr: any) {
+        const code = innerErr?.code || "";
+        const msg = String(innerErr?.message || "");
+        if (
+          code === "SESSION_NOT_FOUND" ||
+          code === "WORKFLOW_MISMATCH" ||
+          msg.includes("Session") ||
+          msg.includes("workflow")
+        ) {
+          sessId = await ensureStressSession(true);
+          simWfRes = await api.stressSimulate({
+            session_id: sessId,
+            hazard_type: hazardType,
+            lon,
+            lat,
+            radius_m: radius === "" ? null : Number(radius),
+            intensity,
+            measures
+          });
+        } else {
+          throw innerErr;
+        }
+      }
 
       workflowStore.syncFromBackend(simWfRes);
 
@@ -456,18 +614,16 @@ export default function EmergencyPanel() {
                 actionLabel="Save Mitigations to Scenario"
                 onAction={async () => {
                   const workflowStore = useWorkflowStore.getState();
-                  let sessId = workflowStore.context.backendSessionId;
-                  if (!sessId) {
-                    const startRes = await api.startWorkflow("stress", activeScenario?.id);
-                    workflowStore.syncFromBackend(startRes);
-                    sessId = startRes.session_id;
+                  try {
+                    const sessId = await ensureStressSession(false);
+                    const mitRes = await api.stressMitigate({
+                      session_id: sessId,
+                      measures
+                    });
+                    workflowStore.syncFromBackend(mitRes);
+                  } catch (e) {
+                    console.warn("Workflow mitigate sync skipped:", e);
                   }
-
-                  const mitRes = await api.stressMitigate({
-                    session_id: sessId,
-                    measures
-                  });
-                  workflowStore.syncFromBackend(mitRes);
 
                   if (measures.length > 0) {
                     const scStore = useScenarioStore.getState();

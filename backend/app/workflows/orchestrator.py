@@ -281,7 +281,7 @@ class WorkflowOrchestrator:
             scenario_id=sid
         )
 
-        res_id = sim_out.get("persist_id") or f"res_sim_{req.session_id}"
+        res_id = sim_out.get("result_id") or sim_out.get("persist_id") or f"res_sim_{req.session_id}"
 
         workflow_state_service.complete_step(
             req.session_id,
