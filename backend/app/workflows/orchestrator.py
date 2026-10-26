@@ -313,22 +313,33 @@ class WorkflowOrchestrator:
         session = workflow_state_service.get(req.session_id)
         validate_prerequisite(session, "simulate", "reroute")
 
-        pos = session.context.get("incident_pos", {"lon": 73.135, "lat": 19.002})
+        saved_pos = session.context.get("incident_pos", {"lon": 73.135, "lat": 19.002})
+        inc_lon = float(req.lon) if req.lon is not None else float(saved_pos["lon"])
+        inc_lat = float(req.lat) if req.lat is not None else float(saved_pos["lat"])
         blocked = session.context.get("blocked_roads", [])
+        turnout_kwargs = (
+            {"turnout_seconds": float(req.turnout_seconds)}
+            if req.turnout_seconds is not None
+            else {}
+        )
 
         route_out = self.emergency_svc.calculate_emergency_route(
-            lon=pos["lon"],
-            lat=pos["lat"],
+            lon=inc_lon,
+            lat=inc_lat,
             responder_type=req.responder_type,
             top_n=3,
             response_target_seconds=req.target_min * 60,
-            blocked_road_ids=blocked
+            blocked_road_ids=blocked,
+            **turnout_kwargs,
         )
 
         workflow_state_service.complete_step(
             req.session_id,
             step_id="reroute",
-            context_patch={"route_output": route_out},
+            context_patch={
+                "route_output": route_out,
+                "incident_pos": {"lon": inc_lon, "lat": inc_lat},
+            },
             next_step="mitigate"
         )
 

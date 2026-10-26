@@ -519,6 +519,13 @@ export default function CesiumViewer() {
             useMapStore.getState().setLastClick({ lon: lonVal, lat: latVal });
           }
 
+          // 0. Emergency Response incident picking takes top priority when armed
+          if (useMapStore.getState().incidentPickActive) {
+            useMapStore.getState().setIncidentPickActive(false);
+            viewer.scene.canvas.style.cursor = "";
+            return;
+          }
+
           // 1. Primary NagarX disaster-aware route workflow interaction modes
           const routeInteraction = useRouteAnalysisStore.getState().interactionMode;
           if (routeInteraction === "toggle_road_segment") {
@@ -918,41 +925,164 @@ export default function CesiumViewer() {
             if (entities[0]) mapBridge.flyTo(entities[0].entityId);
           },
           showEmergencyRoutes: (routes: any[]) => {
-            // Remove only route lines; the hazard polygon lives in the same
-            // data source and must survive a route refresh.
+            ds.emergency.show = true;
+            // Remove only route & station entities; hazard polygon/pin live in
+            // the same data source and must survive a route refresh.
             ds.emergency.entities.values
-              .filter((e: any) => String(e.id).startsWith("route-"))
+              .filter((e: any) => {
+                const eid = String(e.id);
+                return (
+                  eid.startsWith("route-") ||
+                  eid.startsWith("station-") ||
+                  eid.startsWith("routeconn-")
+                );
+              })
               .forEach((e: any) => ds.emergency.entities.remove(e));
+
+            const palette = ["#00e5ff", "#a78bfa", "#94a3b8"];
+
             (routes || []).forEach((r, i) => {
+              const rawPath: number[][] = Array.isArray(r.path) ? r.path : [];
               const pts: number[] = [];
-              (r.path || []).forEach((c: number[]) => { pts.push(c[0], c[1]); });
+              rawPath.forEach((c: number[]) => {
+                if (Number.isFinite(c?.[0]) && Number.isFinite(c?.[1])) {
+                  pts.push(c[0], c[1]);
+                }
+              });
+
+              const stLoc: number[] | null =
+                Array.isArray(r.stationLocation) &&
+                Number.isFinite(r.stationLocation[0]) &&
+                Number.isFinite(r.stationLocation[1])
+                  ? [r.stationLocation[0], r.stationLocation[1]]
+                  : rawPath.length > 0
+                  ? [rawPath[0][0], rawPath[0][1]]
+                  : null;
+
+              const incLoc: number[] | null =
+                Array.isArray(r.incidentLocation) &&
+                Number.isFinite(r.incidentLocation[0]) &&
+                Number.isFinite(r.incidentLocation[1])
+                  ? [r.incidentLocation[0], r.incidentLocation[1]]
+                  : null;
+
+              if (pts.length < 4 && stLoc && incLoc) {
+                pts.length = 0;
+                pts.push(stLoc[0], stLoc[1], incLoc[0], incLoc[1]);
+              }
               if (pts.length < 4) return;
+
               const primary = r.isPrimary ?? i === 0;
+              const rank = r.rank ?? i + 1;
+              const baseHex =
+                primary && r.withinTarget === false
+                  ? "#ff5252"
+                  : palette[Math.min(i, palette.length - 1)];
+
               ds.emergency.entities.add({
                 id: `route-${r.stationId ?? i}`,
-                name: `${r.stationName ?? "Unit"} — ${r.responseTimeMin ?? "?"} min`,
+                name: `#${rank} ${r.stationName ?? "Unit"} — ${
+                  typeof r.responseTimeMin === "number"
+                    ? r.responseTimeMin.toFixed(2)
+                    : r.responseTimeMin ?? "?"
+                } min`,
                 polyline: {
                   positions: Cesium.Cartesian3.fromDegreesArray(pts),
-                  width: primary ? 8 : 4,
+                  width: primary ? 8.5 : 4.5,
                   clampToGround: true,
                   material: primary
                     ? new Cesium.PolylineGlowMaterialProperty({
-                        color: C(r.withinTarget === false ? "#ff5252" : "#00e5ff", 0.95),
-                        glowPower: 0.28
+                        color: C(baseHex, 0.96),
+                        glowPower: 0.25
                       })
-                    : C("#7d8ea0", 0.6)
+                    : C(baseHex, 0.72)
                 }
               });
+
+              // Dashed approach connector: Station -> Road entry & Road exit -> Incident
+              if (stLoc && rawPath.length > 0) {
+                const firstPt = rawPath[0];
+                const dLon = Math.abs(stLoc[0] - firstPt[0]);
+                const dLat = Math.abs(stLoc[1] - firstPt[1]);
+                if (dLon > 0.00004 || dLat > 0.00004) {
+                  ds.emergency.entities.add({
+                    id: `routeconn-st-${r.stationId ?? i}`,
+                    polyline: {
+                      positions: Cesium.Cartesian3.fromDegreesArray([
+                        stLoc[0], stLoc[1], firstPt[0], firstPt[1]
+                      ]),
+                      width: primary ? 3 : 2,
+                      clampToGround: true,
+                      material: new Cesium.PolylineDashMaterialProperty({
+                        color: C(baseHex, 0.85),
+                        dashLength: 10
+                      })
+                    }
+                  });
+                }
+              }
+
+              if (primary && incLoc && rawPath.length > 0) {
+                const lastPt = rawPath[rawPath.length - 1];
+                const dLon = Math.abs(incLoc[0] - lastPt[0]);
+                const dLat = Math.abs(incLoc[1] - lastPt[1]);
+                if (dLon > 0.00004 || dLat > 0.00004) {
+                  ds.emergency.entities.add({
+                    id: `routeconn-inc-${r.stationId ?? i}`,
+                    polyline: {
+                      positions: Cesium.Cartesian3.fromDegreesArray([
+                        lastPt[0], lastPt[1], incLoc[0], incLoc[1]
+                      ]),
+                      width: 3.5,
+                      clampToGround: true,
+                      material: new Cesium.PolylineDashMaterialProperty({
+                        color: C("#ff5252", 0.9),
+                        dashLength: 10
+                      })
+                    }
+                  });
+                }
+              }
+
+              // Station origin marker & rank badge
+              if (stLoc) {
+                const timeStr =
+                  typeof r.responseTimeMin === "number"
+                    ? `${r.responseTimeMin.toFixed(1)}m`
+                    : "";
+                ds.emergency.entities.add({
+                  id: `station-${r.stationId ?? i}`,
+                  position: Cesium.Cartesian3.fromDegrees(stLoc[0], stLoc[1], 32),
+                  point: {
+                    pixelSize: primary ? 13 : 10,
+                    color: C(baseHex, 1),
+                    outlineColor: C("#020617", 0.95),
+                    outlineWidth: 2.5,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                  },
+                  label: {
+                    text: `#${rank} ${r.stationName ?? "Station"}${timeStr ? ` · ${timeStr}` : ""}`,
+                    font: primary ? "700 11.5px Inter, sans-serif" : "600 10.5px Inter, sans-serif",
+                    fillColor: C("#f8fafc", 1),
+                    showBackground: true,
+                    backgroundColor: C("#0f172a", primary ? 0.92 : 0.78),
+                    pixelOffset: new Cesium.Cartesian2(0, -22),
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                  }
+                });
+              }
             });
-            // Frame what was just drawn. Without this the routes render
-            // correctly but off-screen, which reads as "nothing happened".
-            const drawn = ds.emergency.entities.values
-              .filter((e: any) => String(e.id).startsWith("route-"));
+
+            // Frame both drawn routes and the incident marker cleanly
+            const drawn = ds.emergency.entities.values.filter((e: any) => {
+              const eid = String(e.id);
+              return eid.startsWith("route-") || eid === "hazard-origin";
+            });
             if (drawn.length) {
               viewer.flyTo(drawn, {
-                duration: 1.4,
+                duration: 1.2,
                 offset: new Cesium.HeadingPitchRange(
-                  0, Cesium.Math.toRadians(-50), 0)
+                  0, Cesium.Math.toRadians(-52), 0)
               }).catch(() => { /* superseded by another camera move */ });
             }
           },
@@ -986,6 +1116,7 @@ export default function CesiumViewer() {
             draw(impact.reopened, "reopened", "#22c55e", 6, 0.95);
           },
           showHazard: (h: any) => {
+            ds.emergency.show = true;
             ds.emergency.entities.values
               .filter((e: any) => String(e.id).startsWith("hazard-"))
               .forEach((e: any) => ds.emergency.entities.remove(e));
@@ -1023,21 +1154,38 @@ export default function CesiumViewer() {
                 }
               });
             }
-            if (h.center) {
+            if (h.center && Number.isFinite(h.center[0]) && Number.isFinite(h.center[1])) {
               ds.emergency.entities.add({
                 id: "hazard-origin",
-                position: Cesium.Cartesian3.fromDegrees(h.center[0], h.center[1], 30),
-                point: { pixelSize: 14, color: C("#ff2d2d", 1), outlineColor: C("#ffffff", 0.9), outlineWidth: 2 },
+                position: Cesium.Cartesian3.fromDegrees(h.center[0], h.center[1], 32),
+                point: {
+                  pixelSize: 15,
+                  color: C("#ff2d2d", 1),
+                  outlineColor: C("#ffffff", 0.95),
+                  outlineWidth: 2.5,
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY
+                },
                 label: {
-                  text: h.label ?? "Incident",
-                  font: "600 12px Inter, sans-serif",
+                  text: `🎯 ${h.label ?? "Incident"} (${Number(h.center[1]).toFixed(4)}°N, ${Number(h.center[0]).toFixed(4)}°E)`,
+                  font: "700 11.5px Inter, sans-serif",
                   fillColor: C("#ffffff", 1),
                   showBackground: true,
-                  backgroundColor: C("#c0392b", 0.85),
-                  pixelOffset: new Cesium.Cartesian2(0, -26),
+                  backgroundColor: C("#b91c1c", 0.92),
+                  pixelOffset: new Cesium.Cartesian2(0, -24),
                   disableDepthTestDistance: Number.POSITIVE_INFINITY
                 }
               });
+              if (h.flyTo) {
+                viewer.camera.flyTo({
+                  destination: Cesium.Cartesian3.fromDegrees(h.center[0], h.center[1] - 0.012, 2200),
+                  orientation: {
+                    heading: 0,
+                    pitch: Cesium.Math.toRadians(-48),
+                    roll: 0,
+                  },
+                  duration: 1.0,
+                });
+              }
             }
           },
           clearEmergency: () => ds.emergency.entities.removeAll(),  // routes, hazard and network impact all live here
@@ -1303,12 +1451,23 @@ export default function CesiumViewer() {
     });
   }, [routeResult, studyAreaId]);
 
+  const incidentPickActive = useMapStore((s) => s.incidentPickActive);
   const ready = useMapStore((s) => s.ready);
   const error = useMapStore((s) => s.error);
 
   return (
     <div className="cesium-root">
-      <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />
+      <div
+        ref={hostRef}
+        style={{
+          position: "absolute",
+          inset: 0,
+          cursor:
+            incidentPickActive || interactionMode !== "navigate"
+              ? "crosshair"
+              : undefined,
+        }}
+      />
 
       {ready && !error && (
         <div

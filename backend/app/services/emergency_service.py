@@ -81,7 +81,12 @@ class EmergencyService:
         if not stations:
             return {"error": f"no '{responder_type}' facilities in the database"}
 
-        G = build_graph(roads, mode="emergency", node_network=(len(roads) <= 600))
+        G = build_graph(
+            roads,
+            mode="emergency",
+            node_network=(len(roads) <= 600),
+            max_segment_m=25.0,
+        )
         stats = {}
         if blocked_road_ids or slowed_road_ids:
             G, stats = degrade_graph(
@@ -102,10 +107,14 @@ class EmergencyService:
             response_target_seconds=response_target_seconds)
 
         out = res.to_dict()
-        # Paths are metres internally; the map needs lon/lat.
+        # Paths and terminal coordinates are metres internally; the map needs lon/lat.
         for rec in out.get("records", []):
             if rec.get("path"):
                 rec["path"] = self._to_lonlat_path(rec["path"])
+            if rec.get("station_location"):
+                rec["station_location"] = self._to_lonlat_path([rec["station_location"]])[0]
+            if rec.get("incident_location"):
+                rec["incident_location"] = self._to_lonlat_path([rec["incident_location"]])[0]
         if stats:
             out.setdefault("network", {}).update(stats)
         if persist:
@@ -284,7 +293,12 @@ class EmergencyService:
             return {"error": "insufficient data for response routing",
                     "responder_type": responder_type}
 
-        G = build_graph(roads, mode="emergency", node_network=(len(roads) <= 600))
+        G = build_graph(
+            roads,
+            mode="emergency",
+            node_network=(len(roads) <= 600),
+            max_segment_m=25.0,
+        )
         incident = self._point(lon, lat)
         prov = self._prov("network.emergency_routing",
                           {"responder_type": responder_type,
@@ -310,6 +324,10 @@ class EmergencyService:
             rec = dict(r.records[0])
             if rec.get("path"):
                 rec["path"] = self._to_lonlat_path(rec["path"])
+            if rec.get("station_location"):
+                rec["station_location"] = self._to_lonlat_path([rec["station_location"]])[0]
+            if rec.get("incident_location"):
+                rec["incident_location"] = self._to_lonlat_path([rec["incident_location"]])[0]
             return rec
 
         return {

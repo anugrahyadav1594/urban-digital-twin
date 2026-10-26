@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
-import { api, isDemoMode } from "@/lib/api/client";
+import { useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api/client";
 import { mapBridge } from "@/cesium/map-bridge";
-import { STUDY_AREAS, compareRoutesOnGraph } from "@/lib/routing-engine";
+import { STUDY_AREAS, compareRoutesOnGraph, haversineDistanceM } from "@/lib/routing-engine";
 import { useMapStore } from "@/stores/map-store";
 import { useRouteAnalysisStore } from "@/stores/route-analysis-store";
 import { useScenarioStore } from "@/stores/scenario-store";
@@ -61,9 +61,11 @@ export default function EmergencyPanel() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<Error | string | null>(null);
 
-  // Incident location. Defaults to the city centre; "pick on map" overwrites it.
+  // Incident location. Defaults to the city centre; "pick on map" or typing updates it.
   const [lon, setLon] = useState(73.135);
   const [lat, setLat] = useState(19.002);
+  const [lonText, setLonText] = useState("73.135");
+  const [latText, setLatText] = useState("19.002");
 
   const [responder, setResponder] = useState("fire_station");
   const [targetMin, setTargetMin] = useState(8);
@@ -77,8 +79,11 @@ export default function EmergencyPanel() {
   const [sim, setSim] = useState<any | null>(null);
 
   const activeScenario = useScenarioStore((s) => s.scenarios.find((x) => x.id === s.activeId));
-  const picked = useMapStore((s) => s.lastClick);
-  const [picking, setPicking] = useState(false);
+  const incidentPickActive = useMapStore((s) => s.incidentPickActive);
+  const setIncidentPickActive = useMapStore((s) => s.setIncidentPickActive);
+  const armedSeqRef = useRef<number>(0);
+  const pickArmedRef = useRef<boolean>(false);
+  const onMapPickRef = useRef<(lonVal: number, latVal: number) => void>(() => {});
 
   useEffect(() => {
     api.emergencyCatalogue().then((c) => {
@@ -88,18 +93,97 @@ export default function EmergencyPanel() {
         setHazardType(resolved.hazards[0].id);
       }
     });
+    // Place initial incident pin on mount; clean up pick mode on unmount
+    mapBridge.showHazard({ center: [73.135, 19.002], label: "Incident" });
+    const unsubClick = useMapStore.subscribe((state) => {
+      const clicked = state.lastClick;
+      if (
+        pickArmedRef.current &&
+        clicked &&
+        clicked.seq > armedSeqRef.current &&
+        typeof clicked.lon === "number" &&
+        typeof clicked.lat === "number"
+      ) {
+        pickArmedRef.current = false;
+        armedSeqRef.current = clicked.seq;
+        useMapStore.getState().setIncidentPickActive(false);
+        onMapPickRef.current(clicked.lon, clicked.lat);
+      }
+    });
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape" && pickArmedRef.current) {
+        pickArmedRef.current = false;
+        useMapStore.getState().setIncidentPickActive(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      pickArmedRef.current = false;
+      unsubClick();
+      window.removeEventListener("keydown", onKeyDown);
+      useMapStore.getState().setIncidentPickActive(false);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!picking) return;
-    if (picked && typeof picked.lon === "number" && typeof picked.lat === "number") {
-      setLon(Number(picked.lon.toFixed(6)));
-      setLat(Number(picked.lat.toFixed(6)));
-      setPicking(false);
-      mapBridge.showHazard({ center: [picked.lon, picked.lat], label: "Incident" });
+  const toBridgeRoute = (r: any, fallbackLon: number, fallbackLat: number) => ({
+    stationId: r.station_id,
+    stationName: r.station_name,
+    path: r.path,
+    responseTimeMin: r.response_time_min,
+    distanceM: r.distance_m,
+    rank: r.rank,
+    stationLocation: r.station_location,
+    incidentLocation: r.incident_location ?? [fallbackLon, fallbackLat],
+    isPrimary: r.is_primary,
+    withinTarget: r.within_target,
+  });
+
+  const commitTypedCoords = (opts?: { flyTo?: boolean }): { lon: number; lat: number } | null => {
+    const parsedLon = Number(lonText);
+    const parsedLat = Number(latText);
+    if (
+      !Number.isFinite(parsedLon) ||
+      !Number.isFinite(parsedLat) ||
+      Math.abs(parsedLon) > 180 ||
+      Math.abs(parsedLat) > 90
+    ) {
+      setErr("Enter valid incident coordinates (Longitude -180..180, Latitude -90..90).");
+      return null;
     }
-  }, [picked, picking]);
+    const changed =
+      Math.abs(parsedLon - lon) > 1e-7 || Math.abs(parsedLat - lat) > 1e-7;
+    const cleanLon = Number(parsedLon.toFixed(6));
+    const cleanLat = Number(parsedLat.toFixed(6));
+    setLon(cleanLon);
+    setLat(cleanLat);
+    setLonText(String(cleanLon));
+    setLatText(String(cleanLat));
+    if (changed) {
+      setRoutes(null);
+      mapBridge.showEmergencyRoutes([]);
+    }
+    mapBridge.showHazard({
+      center: [cleanLon, cleanLat],
+      label: "Incident",
+      flyTo: opts?.flyTo,
+    });
+    return { lon: cleanLon, lat: cleanLat };
+  };
+
+  const togglePickOnMap = () => {
+    if (incidentPickActive || pickArmedRef.current) {
+      pickArmedRef.current = false;
+      setIncidentPickActive(false);
+      return;
+    }
+    // Record current click sequence so stale clicks never immediately cancel picking
+    armedSeqRef.current = useMapStore.getState().clickSeq;
+    pickArmedRef.current = true;
+    // Clear any competing interaction mode from the guided route panel
+    useRouteAnalysisStore.getState().setInteractionMode("navigate");
+    setIncidentPickActive(true);
+  };
 
   const hazardSpec = cat.hazards.find((h) => h.id === hazardType);
   const applicable = (m: Measure) => !m.appliesTo.length || m.appliesTo.includes(hazardType);
@@ -121,7 +205,7 @@ export default function EmergencyPanel() {
     return startRes.session_id;
   };
 
-  const computeOfflineDemoResponderRoutes = () => {
+  const computeOfflineDemoResponderRoutes = (targetLon: number, targetLat: number, responderKind: string) => {
     const raState = useRouteAnalysisStore.getState();
     const areaDef = STUDY_AREAS[raState.studyAreaId];
     const ds = raState.datasets[raState.studyAreaId];
@@ -129,29 +213,36 @@ export default function EmergencyPanel() {
     if (!ds || !builtGraph || !areaDef) {
       throw new Error("Study-area road network is still loading. Try again in a moment.");
     }
-    const candidates = ds.landmarks.filter((lm) =>
-      responder === "hospital"
-        ? lm.category === "hospital" || lm.category === "clinic"
-        : responder === "fire_station"
-        ? lm.category === "fire_station" || lm.category === "emergency" || lm.name.toLowerCase().includes("fire")
-        : lm.category === responder
-    );
+    const candidates = ds.landmarks
+      .filter((lm) =>
+        responderKind === "hospital"
+          ? lm.category === "hospital" || lm.category === "clinic"
+          : responderKind === "fire_station"
+          ? lm.category === "fire_station" || lm.category === "emergency" || lm.name.toLowerCase().includes("fire")
+          : lm.category === responderKind
+      )
+      .sort(
+        (a, b) =>
+          haversineDistanceM([a.lon, a.lat], [targetLon, targetLat]) -
+          haversineDistanceM([b.lon, b.lat], [targetLon, targetLat])
+      );
+
     if (!candidates.length) {
       return {
         records: [],
         warnings: [
-          `Demo dataset '${areaDef.name}' has no mapped '${responder}' facility — switch service to Hospital / ambulance or Fire station.`,
+          `Demo dataset '${areaDef.name}' has no mapped '${responderKind}' facility — switch service to Hospital / ambulance or Fire station.`,
         ],
       };
     }
 
     const scored: any[] = [];
-    for (const fac of candidates.slice(0, 12)) {
+    for (const fac of candidates.slice(0, 15)) {
       const cmp = compareRoutesOnGraph({
         graph: builtGraph,
         studyArea: areaDef,
         origin: { lon: fac.lon, lat: fac.lat, label: fac.name, source: "landmark" },
-        destination: { lon, lat, label: "Incident", source: "coordinates" },
+        destination: { lon: targetLon, lat: targetLat, label: "Incident", source: "coordinates" },
         scenario: {
           ...raState.draftScenario,
           active: false,
@@ -160,12 +251,16 @@ export default function EmergencyPanel() {
         dataMode: "demo",
       });
       if (cmp.baselineRoute.feasible && cmp.baselineRoute.travelTimeS !== null) {
-        const totalSec = cmp.baselineRoute.travelTimeS + turnout;
+        const accessDist =
+          (cmp.baselineRoute.snapOriginM ?? 0) + (cmp.baselineRoute.snapDestinationM ?? 0);
+        const totalSec = cmp.baselineRoute.travelTimeS + accessDist / 4.2 + turnout;
         const respMin = totalSec / 60;
         scored.push({
           station_id: fac.id,
           station_name: `${fac.name} (Demo OSM)`,
-          distance_m: cmp.baselineRoute.distanceM ?? 0,
+          station_location: [fac.lon, fac.lat],
+          incident_location: [targetLon, targetLat],
+          distance_m: (cmp.baselineRoute.distanceM ?? 0) + accessDist,
           response_time_min: respMin,
           within_target: respMin <= targetMin,
           path: cmp.baselineRoute.path,
@@ -185,72 +280,117 @@ export default function EmergencyPanel() {
     };
   };
 
-  const runRoute = async (useHazard = false) => {
+  const isBackendUnreachableError = (errObj: any): boolean => {
+    const msg = String(errObj?.message || errObj || "");
+    return (
+      msg.includes("unreachable") ||
+      msg.includes("Failed to fetch") ||
+      msg.includes("NetworkError") ||
+      msg.includes("HTTP 502") ||
+      msg.includes("HTTP 503") ||
+      msg.includes("HTTP 504") ||
+      msg.includes("AbortError")
+    );
+  };
+
+  const runRoute = async (
+    useHazard = false,
+    overrideLon?: number,
+    overrideLat?: number,
+    overrideResponder?: string
+  ) => {
+    let targetLon = overrideLon;
+    let targetLat = overrideLat;
+    if (targetLon === undefined || targetLat === undefined) {
+      const parsedLon = Number(lonText);
+      const parsedLat = Number(latText);
+      if (
+        !Number.isFinite(parsedLon) ||
+        !Number.isFinite(parsedLat) ||
+        Math.abs(parsedLon) > 180 ||
+        Math.abs(parsedLat) > 90
+      ) {
+        setErr("Enter valid incident coordinates (Longitude -180..180, Latitude -90..90).");
+        return;
+      }
+      targetLon = Number(parsedLon.toFixed(6));
+      targetLat = Number(parsedLat.toFixed(6));
+      setLon(targetLon);
+      setLat(targetLat);
+    }
+    const respType = overrideResponder ?? responder;
+
     setBusy(true); setErr(null);
     if (!useHazard) setSim(null);
     try {
       let out: any = null;
       const workflowStore = useWorkflowStore.getState();
 
-      if (isDemoMode()) {
-        out = computeOfflineDemoResponderRoutes();
-      } else if (
-        useHazard &&
-        workflowStore.activeWorkflowId === "stress" &&
-        workflowStore.context.backendSessionId &&
-        workflowStore.completedStepIds.includes("simulate")
-      ) {
-        try {
-          const routeWfRes = await api.stressReroute({
-            session_id: workflowStore.context.backendSessionId,
-            responder_type: responder,
-            target_min: targetMin
-          });
-          workflowStore.syncFromBackend(routeWfRes);
-          out = routeWfRes.data || {};
-        } catch {
-          // Session expired on backend reload — fall back to direct PostGIS route endpoint
+      try {
+        if (
+          useHazard &&
+          workflowStore.activeWorkflowId === "stress" &&
+          workflowStore.context.backendSessionId &&
+          workflowStore.completedStepIds.includes("simulate")
+        ) {
+          try {
+            const routeWfRes = await api.stressReroute({
+              session_id: workflowStore.context.backendSessionId,
+              responder_type: respType,
+              target_min: targetMin,
+              lon: targetLon,
+              lat: targetLat,
+              turnout_seconds: turnout,
+            });
+            workflowStore.syncFromBackend(routeWfRes);
+            out = routeWfRes.data || {};
+          } catch {
+            out = await api.emergencyRoute({
+              lon: targetLon,
+              lat: targetLat,
+              responderType: respType,
+              topN: 3,
+              turnoutSeconds: turnout,
+              responseTargetSeconds: targetMin * 60,
+              blockedRoadIds: sim?.network?.blocked_ids ?? [],
+              slowedRoadIds: sim?.network?.slowed_ids ?? [],
+              scenario_id: activeScenario?.id,
+            });
+          }
+        } else {
+          // Always query live PostGIS /api/v1/emergency/route first when reachable
           out = await api.emergencyRoute({
-            lon,
-            lat,
-            responderType: responder,
+            lon: targetLon,
+            lat: targetLat,
+            responderType: respType,
             topN: 3,
             turnoutSeconds: turnout,
             responseTargetSeconds: targetMin * 60,
-            blockedRoadIds: sim?.network?.blocked_ids ?? [],
-            slowedRoadIds: sim?.network?.slowed_ids ?? [],
-            scenario_id: activeScenario?.id
+            blockedRoadIds: useHazard ? (sim?.network?.blocked_ids ?? []) : [],
+            slowedRoadIds: useHazard ? (sim?.network?.slowed_ids ?? []) : [],
+            scenario_id: activeScenario?.id,
           });
         }
-      } else {
-        // Standalone responder dispatch: query /api/v1/emergency/route directly
-        // without requiring a prior 'simulate' workflow step.
-        out = await api.emergencyRoute({
-          lon,
-          lat,
-          responderType: responder,
-          topN: 3,
-          turnoutSeconds: turnout,
-          responseTargetSeconds: targetMin * 60,
-          blockedRoadIds: useHazard ? (sim?.network?.blocked_ids ?? []) : [],
-          slowedRoadIds: useHazard ? (sim?.network?.slowed_ids ?? []) : [],
-          scenario_id: activeScenario?.id
-        });
+      } catch (liveErr: any) {
+        if (isBackendUnreachableError(liveErr)) {
+          out = computeOfflineDemoResponderRoutes(targetLon, targetLat, respType);
+        } else {
+          throw liveErr;
+        }
       }
 
       const recs = out?.records ?? [];
       setRoutes(recs);
-      mapBridge.showHazard({ center: [lon, lat], label: "Incident" });
-      mapBridge.showEmergencyRoutes(recs.map((r: any) => ({
-        stationId: r.station_id, stationName: r.station_name, path: r.path,
-        responseTimeMin: r.response_time_min, isPrimary: r.is_primary,
-        withinTarget: r.within_target
-      })));
+      mapBridge.showHazard({ center: [targetLon, targetLat], label: "Incident" });
+      mapBridge.showEmergencyRoutes(
+        recs.map((r: any) => toBridgeRoute(r, targetLon!, targetLat!))
+      );
       if (!useHazard) mapBridge.showNetworkImpact(null);
     } catch (e: any) {
       const msg = String(e?.message || e || "");
       if (msg.includes("no '") && msg.includes("facilities in the database")) {
         setRoutes([]);
+        mapBridge.showEmergencyRoutes([]);
         setErr(null);
       } else {
         setErr(e);
@@ -258,14 +398,31 @@ export default function EmergencyPanel() {
     } finally { setBusy(false); }
   };
 
+  useEffect(() => {
+    onMapPickRef.current = (pickedLon: number, pickedLat: number) => {
+      const cleanLon = Number(pickedLon.toFixed(6));
+      const cleanLat = Number(pickedLat.toFixed(6));
+      setLon(cleanLon);
+      setLat(cleanLat);
+      setLonText(String(cleanLon));
+      setLatText(String(cleanLat));
+      setErr(null);
+      if (tab === "route") {
+        mapBridge.showHazard({ center: [cleanLon, cleanLat], label: "Incident" });
+        void runRoute(Boolean(sim?.network?.blocked_count), cleanLon, cleanLat);
+      } else {
+        setRoutes(null);
+        mapBridge.showEmergencyRoutes([]);
+        mapBridge.showHazard({ center: [cleanLon, cleanLat], label: "Incident" });
+      }
+    };
+  });
+
   const runSim = async () => {
+    const committed = commitTypedCoords();
+    if (!committed) return;
     setBusy(true); setErr(null); setRoutes(null);
     try {
-      if (isDemoMode()) {
-        throw new Error(
-          "Full building/population exposure simulation requires Live PostGIS mode. Start the FastAPI + PostGIS backend, or use the main Guided Route Workflow panel on the left for offline Demo Mode route comparison."
-        );
-      }
       const workflowStore = useWorkflowStore.getState();
       let sessId = await ensureStressSession(false);
 
@@ -274,13 +431,18 @@ export default function EmergencyPanel() {
         simWfRes = await api.stressSimulate({
           session_id: sessId,
           hazard_type: hazardType,
-          lon,
-          lat,
+          lon: committed.lon,
+          lat: committed.lat,
           radius_m: radius === "" ? null : Number(radius),
           intensity,
           measures
         });
       } catch (innerErr: any) {
+        if (isBackendUnreachableError(innerErr)) {
+          throw new Error(
+            "Full building/population exposure simulation requires Live PostGIS mode. Ensure FastAPI + PostGIS are running, or use the Guided Route Workflow panel on the left for offline Demo Mode route comparison."
+          );
+        }
         const code = innerErr?.code || "";
         const msg = String(innerErr?.message || "");
         if (
@@ -293,8 +455,8 @@ export default function EmergencyPanel() {
           simWfRes = await api.stressSimulate({
             session_id: sessId,
             hazard_type: hazardType,
-            lon,
-            lat,
+            lon: committed.lon,
+            lat: committed.lat,
             radius_m: radius === "" ? null : Number(radius),
             intensity,
             measures
@@ -319,11 +481,7 @@ export default function EmergencyPanel() {
       const resp = out.response;
       const draw = resp?.with_measures ?? resp?.during_event ?? resp?.normal;
       if (draw?.path) {
-        mapBridge.showEmergencyRoutes([{
-          stationId: draw.station_id, stationName: draw.station_name,
-          path: draw.path, responseTimeMin: draw.response_time_min,
-          isPrimary: true, withinTarget: draw.within_target
-        }]);
+        mapBridge.showEmergencyRoutes([toBridgeRoute(draw, committed.lon, committed.lat)]);
       } else {
         mapBridge.showEmergencyRoutes([]);
       }
@@ -345,26 +503,55 @@ export default function EmergencyPanel() {
       <SectionTitle>Incident location</SectionTitle>
       <div style={{ display: "flex", gap: 8 }}>
         <Field label="Longitude">
-          <input className="input" type="number" step={0.0001} value={lon}
-            onChange={(e) => setLon(Number(e.target.value))} />
+          <input
+            className="input"
+            type="text"
+            inputMode="decimal"
+            value={lonText}
+            onChange={(e) => setLonText(e.target.value)}
+            onBlur={() => commitTypedCoords()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const c = commitTypedCoords({ flyTo: true });
+                if (c && tab === "route") void runRoute(false, c.lon, c.lat);
+              }
+            }}
+          />
         </Field>
         <Field label="Latitude">
-          <input className="input" type="number" step={0.0001} value={lat}
-            onChange={(e) => setLat(Number(e.target.value))} />
+          <input
+            className="input"
+            type="text"
+            inputMode="decimal"
+            value={latText}
+            onChange={(e) => setLatText(e.target.value)}
+            onBlur={() => commitTypedCoords()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const c = commitTypedCoords({ flyTo: true });
+                if (c && tab === "route") void runRoute(false, c.lon, c.lat);
+              }
+            }}
+          />
         </Field>
       </div>
       <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: -2, marginBottom: 10 }}>
-        <button className={picking ? "btn primary" : "btn ghost"}
+        <button
+          className={incidentPickActive ? "btn primary" : "btn ghost"}
           style={{ fontSize: 10.5, padding: "3px 8px" }}
-          onClick={() => setPicking((v) => !v)}>
-          {picking ? "CLICK THE MAP…" : "PICK ON MAP"}
+          onClick={togglePickOnMap}
+        >
+          {incidentPickActive ? "CLICK ON GLOBE… (ESC/CANCEL)" : "PICK ON MAP"}
         </button>
-        <button className="btn ghost" style={{ fontSize: 10.5, padding: "3px 8px" }}
-          onClick={() => mapBridge.showHazard({ center: [lon, lat], label: "Incident" })}>
+        <button
+          className="btn ghost"
+          style={{ fontSize: 10.5, padding: "3px 8px" }}
+          onClick={() => commitTypedCoords({ flyTo: true })}
+        >
           SHOW
         </button>
         <span className="muted" style={{ fontSize: 10 }}>
-          {picking ? "next map click sets the incident" : "or type coordinates"}
+          {incidentPickActive ? "click anywhere on 3D map to place & route" : "or type & press Enter"}
         </span>
       </div>
 
@@ -372,7 +559,17 @@ export default function EmergencyPanel() {
         <>
           <div style={{ display: "flex", gap: 8 }}>
             <Field label="Responding service">
-              <select className="input" value={responder} onChange={(e) => setResponder(e.target.value)}>
+              <select
+                className="input"
+                value={responder}
+                onChange={(e) => {
+                  const nextResp = e.target.value;
+                  setResponder(nextResp);
+                  if (routes !== null) {
+                    void runRoute(Boolean(sim?.network?.blocked_count), lon, lat, nextResp);
+                  }
+                }}
+              >
                 <option value="fire_station">Fire station</option>
                 <option value="hospital">Hospital / ambulance</option>
                 <option value="police">Police</option>
@@ -410,7 +607,7 @@ export default function EmergencyPanel() {
                   <div className="muted" style={{ marginTop: 4, lineHeight: 1.5 }}>
                     Usually one of:
                     <br />• no <span className="mono">{responder}</span> exists in the
-                    database — try another service below
+                    OpenStreetMap extract — try <b>Hospital / ambulance</b> or <b>Fire station</b>
                     <br />• the incident is far from any mapped road — move it nearer a street
                     <br />• the road network has a gap at this location
                   </div>
@@ -419,11 +616,9 @@ export default function EmergencyPanel() {
               {routes.map((r: any) => (
                 <div key={r.station_id} title="Show only this unit's route on the map"
                   onClick={() => {
-                    mapBridge.showEmergencyRoutes([{
-                      stationId: r.station_id, stationName: r.station_name,
-                      path: r.path, responseTimeMin: r.response_time_min,
-                      isPrimary: true, withinTarget: r.within_target
-                    }]);
+                    mapBridge.showEmergencyRoutes([
+                      { ...toBridgeRoute(r, lon, lat), isPrimary: true }
+                    ]);
                   }}
                   style={{
                     display: "flex", alignItems: "center", gap: 8, padding: "5px 7px",
@@ -452,11 +647,7 @@ export default function EmergencyPanel() {
                     within the {targetMin} min target
                   </span>
                   <button className="btn ghost" style={{ fontSize: 10, padding: "2px 7px" }}
-                    onClick={() => mapBridge.showEmergencyRoutes(routes.map((r: any) => ({
-                      stationId: r.station_id, stationName: r.station_name, path: r.path,
-                      responseTimeMin: r.response_time_min, isPrimary: r.is_primary,
-                      withinTarget: r.within_target
-                    })))}>
+                    onClick={() => mapBridge.showEmergencyRoutes(routes.map((r: any) => toBridgeRoute(r, lon, lat)))}>
                     SHOW ALL
                   </button>
                 </div>

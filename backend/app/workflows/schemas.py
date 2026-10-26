@@ -139,6 +139,9 @@ class StressRerouteRequest(BaseModel):
     session_id: str
     responder_type: str = "fire_station"
     target_min: float = 8.0
+    lon: float | None = None
+    lat: float | None = None
+    turnout_seconds: float | None = None
 
 
 class StressMitigateRequest(BaseModel):

@@ -236,6 +236,7 @@ class Facility:
     id: str
     geometry: Any                      # point (analysis CRS)
     type: str = "generic"
+    name: str | None = None
     capacity: float | None = None
     service_radius: float | None = None  # m
 

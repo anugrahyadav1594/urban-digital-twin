@@ -299,7 +299,7 @@ export const useRouteAnalysisStore = create<RouteAnalysisState>((set, get) => ({
         const buildings: StudyAreaBuilding[] = Array.isArray(raw.buildings)
           ? raw.buildings
           : [];
-        const graphBuilt = buildRoadGraph(roads);
+        const graphBuilt = buildRoadGraph(roads, { maxSegmentM: 25 });
         dataset = {
           studyAreaId: "panvel_kalundre_osm",
           roads,

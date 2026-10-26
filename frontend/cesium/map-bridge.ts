@@ -54,6 +54,10 @@ export type EmergencyRoute = {
   stationName: string;
   path: [number, number][] | number[][];
   responseTimeMin: number;
+  distanceM?: number;
+  rank?: number;
+  stationLocation?: [number, number] | number[];
+  incidentLocation?: [number, number] | number[];
   isPrimary?: boolean;
   withinTarget?: boolean;
 };
@@ -64,6 +68,7 @@ export type HazardFootprint = {
   footprint?: { type: string; coordinates: number[][][] } | null;
   footprintMitigated?: { type: string; coordinates: number[][][] } | null;
   label?: string;
+  flyTo?: boolean;
 };
 
 /** Roads the hazard closes, slows, or that a measure reopens - drawn on the map

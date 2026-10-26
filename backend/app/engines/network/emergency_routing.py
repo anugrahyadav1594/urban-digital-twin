@@ -55,30 +55,31 @@ def degrade_graph(
     drop: list[tuple] = []
     for u, v, data in H.edges(data=True):
         # node_roads() planarizes the network and renames the pieces of a
-        # split road to "<parent_id>#<n>". Matching the raw edge id would
-        # silently miss every road that crosses another one - which is most
-        # of them - so the parent id is what must be compared.
+        # split road to "<parent_id>#<n>". Also match OpenStreetMap way tags
+        # stored in `source` ("OpenStreetMap:osm_way_<id>").
         raw = str(data.get("road_id", ""))
         rid = raw.split("#", 1)[0]
-        if rid in blocked or raw in blocked:
+        src_str = str(data.get("source") or "").strip()
+        osm_tag = src_str.split(":", 1)[-1].strip() if "osm_way_" in src_str else ""
+        candidates = {c for c in (rid, raw, src_str, osm_tag) if c}
+        if candidates & blocked:
             drop.append((u, v))
             stats["blocked"] += 1
-        elif rid in slowed or raw in slowed:
+        elif candidates & slowed:
             data["time"] = float(data.get("time", 0.0)) * max(slow_factor, 1.0)
             stats["slowed"] += 1
 
     if blocked_geoms:
-        from shapely.geometry import Point
+        from shapely.geometry import LineString
         from shapely.ops import unary_union
         hazard = unary_union(list(blocked_geoms))
+        drop_set = set(drop)
         for u, v in list(H.edges()):
-            if (u, v) in drop:
+            if (u, v) in drop_set:
                 continue
-            # Midpoint test: an edge crossing the hazard is impassable even
-            # when both endpoints sit outside it.
-            mid = Point((u[0] + v[0]) / 2.0, (u[1] + v[1]) / 2.0)
-            if hazard.contains(mid) or hazard.contains(Point(u)) or hazard.contains(Point(v)):
+            if hazard.intersects(LineString([u, v])):
                 drop.append((u, v))
+                drop_set.add((u, v))
                 stats["blocked_by_geometry"] += 1
 
     H.remove_edges_from(drop)
@@ -146,8 +147,8 @@ def route_to_incident(
         geom = getattr(st, "geometry", None)
         if geom is None:
             continue
-        src, src_snap = nearest_node_in(
-            G, geom.centroid if hasattr(geom, "centroid") else geom, core)
+        st_pt = geom.centroid if hasattr(geom, "centroid") else geom
+        src, src_snap = nearest_node_in(G, st_pt, core)
         if src is None:
             continue
         found = shortest_path(G, src, target, weight="time")
@@ -159,20 +160,34 @@ def route_to_incident(
         for a, b in zip(path[:-1], path[1:]):
             ed = G.get_edge_data(a, b) or {}
             distance += float(ed.get("length", 0.0))
-        total = float(drive) + float(turnout_seconds)
+        # Account for terminal access from facility entrance to road & road to incident
+        access_dist_m = float(src_snap) + float(snap_m)
+        access_time_s = access_dist_m / 4.2  # ~15 km/h driveway / staging approach
+        total_drive_s = float(drive) + access_time_s
+        total_dist_m = distance + access_dist_m
+        total = total_drive_s + float(turnout_seconds)
+        geom_pts = _path_geometry(path)
+        if len(geom_pts) == 1:
+            geom_pts = [
+                [float(st_pt.x), float(st_pt.y)],
+                geom_pts[0],
+                [float(incident_point.x), float(incident_point.y)],
+            ]
         rows.append({
             "staging_distance_m": staged_from_m,
             "station_snap_distance_m": round(src_snap, 1),
             "station_id": str(getattr(st, "id", "")),
             "station_name": getattr(st, "name", None) or f"Station {getattr(st, 'id', '')}",
             "station_type": getattr(st, "type", None),
-            "drive_time_s": round(float(drive), 1),
+            "station_location": [float(st_pt.x), float(st_pt.y)],
+            "incident_location": [float(incident_point.x), float(incident_point.y)],
+            "drive_time_s": round(total_drive_s, 1),
             "turnout_s": round(float(turnout_seconds), 1),
             "response_time_s": round(total, 1),
             "response_time_min": round(total / 60.0, 2),
-            "distance_m": round(distance, 1),
+            "distance_m": round(total_dist_m, 1),
             "within_target": total <= response_target_seconds,
-            "path": _path_geometry(path),
+            "path": geom_pts,
         })
 
     rows.sort(key=lambda r: (r.get("response_time_s", float("inf")),

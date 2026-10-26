@@ -113,6 +113,9 @@ export type StressRerouteRequest = {
   session_id: string;
   responder_type?: string;
   target_min?: number;
+  lon?: number;
+  lat?: number;
+  turnout_seconds?: number;
 };
 
 export type StressMitigateRequest = {

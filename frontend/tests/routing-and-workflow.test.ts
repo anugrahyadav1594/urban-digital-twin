@@ -10,8 +10,10 @@ import {
   buildSyntheticBenchmarkDataset,
   compareRoutesOnGraph,
   createPresetScenarios,
+  snapPointToGraph,
   validateHazardPolygon,
 } from "../lib/routing-engine.ts";
+import { useMapStore } from "../stores/map-store.ts";
 import { useRouteAnalysisStore } from "../stores/route-analysis-store.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -324,3 +326,52 @@ test("Route workflow store handles waypoints, polygon drawing, stale-result dete
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Incident map-pick sequence guard and 25m road densification snap mid-block points accurately", () => {
+  // 1. Stale clicks before arming incidentPickActive have strictly smaller seq than subsequent clicks
+  useMapStore.getState().setLastClick({ lon: 73.111, lat: 18.991 });
+  const staleSeq = useMapStore.getState().clickSeq;
+  assert.ok(staleSeq >= 1);
+
+  useMapStore.getState().setIncidentPickActive(true);
+  assert.equal(useMapStore.getState().incidentPickActive, true);
+  // Stale click still has seq <= staleSeq
+  assert.equal(useMapStore.getState().lastClick?.seq, staleSeq);
+
+  // Next globe click increments seq past staleSeq
+  useMapStore.getState().setLastClick({ lon: 73.1284, lat: 19.0012 });
+  assert.ok((useMapStore.getState().lastClick?.seq ?? 0) > staleSeq);
+  assert.equal(useMapStore.getState().lastClick?.lon, 73.1284);
+  assert.equal(useMapStore.getState().lastClick?.lat, 19.0012);
+  useMapStore.getState().setIncidentPickActive(false);
+
+  // 2. 25m densification snaps mid-block points within <=15m along long road segments
+  const longRoad = [
+    {
+      id: "r_long_corridor",
+      name: "Test Corridor",
+      roadClass: "primary" as const,
+      lanes: 2,
+      speedKmh: 50,
+      oneway: false,
+      coordinates: [
+        [73.120, 19.000],
+        [73.123, 19.000],
+      ] as [number, number][],
+    },
+  ];
+  const sparseGraph = buildRoadGraph(longRoad);
+  const denseGraph = buildRoadGraph(longRoad, { maxSegmentM: 25 });
+  const sparseSnap = snapPointToGraph(sparseGraph, 73.1215, 19.00005);
+  const denseSnap = snapPointToGraph(denseGraph, 73.1215, 19.00005);
+  assert.ok(sparseSnap && denseSnap);
+  assert.ok(
+    sparseSnap.distanceM > 140,
+    `Expected >140m endpoint snap without densification, got ${sparseSnap.distanceM}`
+  );
+  assert.ok(
+    denseSnap.distanceM <= 15,
+    `Expected <=15m mid-block snap with 25m densification, got ${denseSnap.distanceM}`
+  );
+});
+

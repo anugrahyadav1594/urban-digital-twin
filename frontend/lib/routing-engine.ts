@@ -555,7 +555,10 @@ interface RawSubSegment {
  * Planarize crossing road segments and build a directed topological graph
  * with Tarjan strongly connected core identification.
  */
-export function buildRoadGraph(roads: RoadNetworkSegment[]): RoadGraph {
+export function buildRoadGraph(
+  roads: RoadNetworkSegment[],
+  opts?: { maxSegmentM?: number }
+): RoadGraph {
   const rawSegs: RawSubSegment[] = [];
   const roadNamesById = new Map<string, string>();
 
@@ -647,16 +650,33 @@ export function buildRoadGraph(roads: RoadNetworkSegment[]): RoadGraph {
     const speedMps = speedKmh / 3.6;
 
     for (let k = 0; k < pts.length - 1; k++) {
-      const p1 = pts[k];
-      const p2 = pts[k + 1];
-      const u = ensureNode(p1);
-      const v = ensureNode(p2);
-      if (u === v) continue;
-      const lengthM = haversineDistanceM(p1, p2);
-      if (!Number.isFinite(lengthM) || lengthM <= 0) continue;
-      const baseTimeS = lengthM / speedMps;
+      const pStart = pts[k];
+      const pEnd = pts[k + 1];
+      const spanM = haversineDistanceM(pStart, pEnd);
+      if (!Number.isFinite(spanM) || spanM <= 0) continue;
+      const steps =
+        opts?.maxSegmentM && opts.maxSegmentM > 0
+          ? Math.max(1, Math.ceil(spanM / opts.maxSegmentM))
+          : 1;
+      for (let s = 0; s < steps; s++) {
+        const t0 = s / steps;
+        const t1 = (s + 1) / steps;
+        const p1: [number, number] = [
+          Number((pStart[0] + (pEnd[0] - pStart[0]) * t0).toFixed(6)),
+          Number((pStart[1] + (pEnd[1] - pStart[1]) * t0).toFixed(6)),
+        ];
+        const p2: [number, number] = [
+          Number((pStart[0] + (pEnd[0] - pStart[0]) * t1).toFixed(6)),
+          Number((pStart[1] + (pEnd[1] - pStart[1]) * t1).toFixed(6)),
+        ];
+        const u = ensureNode(p1);
+        const v = ensureNode(p2);
+        if (u === v) continue;
+        const lengthM = haversineDistanceM(p1, p2);
+        if (!Number.isFinite(lengthM) || lengthM <= 0) continue;
+        const baseTimeS = lengthM / speedMps;
 
-      const fwd: DirectedRoadEdge = {
+        const fwd: DirectedRoadEdge = {
         edgeId: `e_${edgeSeq++}`,
         from: u,
         to: v,
@@ -672,22 +692,23 @@ export function buildRoadGraph(roads: RoadNetworkSegment[]): RoadGraph {
       adj.get(u)!.push(fwd);
       edges.push(fwd);
 
-      if (!road.oneway) {
-        const rev: DirectedRoadEdge = {
-          edgeId: `e_${edgeSeq++}`,
-          from: v,
-          to: u,
-          fromCoord: p2,
-          toCoord: p1,
-          roadId: road.id,
-          roadName: road.name || road.id,
-          roadClass: road.roadClass,
-          lengthM,
-          speedKmh,
-          baseTimeS,
-        };
-        adj.get(v)!.push(rev);
-        edges.push(rev);
+        if (!road.oneway) {
+          const rev: DirectedRoadEdge = {
+            edgeId: `e_${edgeSeq++}`,
+            from: v,
+            to: u,
+            fromCoord: p2,
+            toCoord: p1,
+            roadId: road.id,
+            roadName: road.name || road.id,
+            roadClass: road.roadClass,
+            lengthM,
+            speedKmh,
+            baseTimeS,
+          };
+          adj.get(v)!.push(rev);
+          edges.push(rev);
+        }
       }
     }
   }

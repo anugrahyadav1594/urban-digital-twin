@@ -15,16 +15,26 @@ BUILDER_VERSION = "0.1.0"
 
 # Default speeds (km/h) by road class, used when a segment lacks one.
 DEFAULT_SPEEDS: dict[str, float] = {
-    "motorway": 80.0, "trunk": 60.0, "primary": 50.0, "arterial": 50.0,
-    "secondary": 40.0, "collector": 40.0, "tertiary": 35.0,
-    "residential": 25.0, "local": 25.0, "service": 15.0, "footway": 5.0,
+    "motorway": 80.0, "motorway_link": 50.0,
+    "trunk": 60.0, "trunk_link": 45.0,
+    "primary": 50.0, "primary_link": 40.0, "arterial": 50.0,
+    "secondary": 40.0, "secondary_link": 35.0, "collector": 40.0,
+    "tertiary": 35.0, "tertiary_link": 30.0,
+    "residential": 25.0, "unclassified": 25.0, "local": 25.0,
+    "living_street": 20.0, "service": 18.0,
+    "track": 15.0, "pedestrian": 5.0, "footway": 5.0, "path": 5.0, "cycleway": 12.0,
 }
+
+_NON_VEHICULAR_CLASSES = frozenset({
+    "footway", "path", "pedestrian", "cycleway",
+    "steps", "corridor", "bridleway", "track",
+})
 
 # Mode profiles: speed multiplier and which classes are traversable.
 MODE_PROFILES: dict[str, dict[str, Any]] = {
-    "car":       {"factor": 1.0,  "exclude": {"footway"}},
-    "emergency": {"factor": 1.3,  "exclude": {"footway"}},
-    "walk":      {"factor": 1.0,  "exclude": set(), "fixed_speed": 4.8},
+    "car":       {"factor": 1.0, "exclude": set(_NON_VEHICULAR_CLASSES)},
+    "emergency": {"factor": 1.3, "exclude": set(_NON_VEHICULAR_CLASSES)},
+    "walk":      {"factor": 1.0, "exclude": set(), "fixed_speed": 4.8},
 }
 
 
@@ -149,12 +159,18 @@ def build_graph(
     mode: str = "car",
     snap_precision: float = 0.5,
     node_network: bool = True,
+    max_segment_m: float | None = None,
 ) -> nx.DiGraph:
     """Build a directed road graph from authoritative road records.
 
     Edge attributes: length (m), speed (km/h), time (s), road_id, road_class.
     Geometry must already be in the projected analysis CRS.
+    Long straight segments (> max_segment_m) are subdivided so point-to-node
+    snapping lands directly beside an incident/facility along the street rather
+    than jumping hundreds of metres to a block endpoint.
     """
+    import math
+
     if mode not in MODE_PROFILES:
         raise ValueError(f"unknown mode profile: {mode}")
     profile = MODE_PROFILES[mode]
@@ -178,22 +194,37 @@ def build_graph(
         mps = max(speed, 1.0) * 1000.0 / 3600.0
 
         for a, b in zip(coords[:-1], coords[1:]):
-            u, v = _round_node(a, snap_precision), _round_node(b, snap_precision)
-            if u == v:
+            dx = b[0] - a[0]
+            dy = b[1] - a[1]
+            seg_len = math.hypot(dx, dy)
+            if seg_len <= 1e-6:
                 continue
-            length = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
-            attrs = {
-                "length": length,
-                "speed": speed,
-                "time": length / mps,
-                "road_id": str(r.id),
-                "road_class": r.road_class,
-                "capacity": r.capacity,
-                "source": getattr(r, "source", None),
-            }
-            G.add_edge(u, v, **attrs)
-            if not r.oneway:
-                G.add_edge(v, u, **attrs)
+            steps = (
+                max(1, int(math.ceil(seg_len / max_segment_m)))
+                if max_segment_m and max_segment_m > 0
+                else 1
+            )
+            pts = [
+                (a[0] + dx * (k / steps), a[1] + dy * (k / steps))
+                for k in range(steps + 1)
+            ]
+            for p0, p1 in zip(pts[:-1], pts[1:]):
+                u, v = _round_node(p0, snap_precision), _round_node(p1, snap_precision)
+                if u == v:
+                    continue
+                length = math.hypot(v[0] - u[0], v[1] - u[1])
+                attrs = {
+                    "length": length,
+                    "speed": speed,
+                    "time": length / mps,
+                    "road_id": str(r.id),
+                    "road_class": r.road_class,
+                    "capacity": r.capacity,
+                    "source": getattr(r, "source", None),
+                }
+                G.add_edge(u, v, **attrs)
+                if not r.oneway:
+                    G.add_edge(v, u, **attrs)
     return G
 
 

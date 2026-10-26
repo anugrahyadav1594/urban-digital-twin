@@ -153,6 +153,7 @@ def to_facility(row: Any, srid: int | None = None) -> Facility:
         id=str(row.id),
         geometry=geom,
         type=row.type,
+        name=getattr(row, "name", None),
         capacity=_f(row.capacity),
         service_radius=_f(row.service_radius_m),
     )
