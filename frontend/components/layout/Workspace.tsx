@@ -10,6 +10,7 @@ import MissionOverview from "../overview/MissionOverview";
 import RouteWorkflowPanel from "../route-workspace/RouteWorkflowPanel";
 import RouteResultsPanel from "../route-workspace/RouteResultsPanel";
 import MapOverlayControls from "../route-workspace/MapOverlayControls";
+import { checkBackend, onBackendStatus } from "@/lib/api/client";
 import { useLayerStore } from "@/stores/layer-store";
 import { useScenarioStore } from "@/stores/scenario-store";
 import { useRouteAnalysisStore } from "@/stores/route-analysis-store";
@@ -52,8 +53,19 @@ export default function Workspace({ initialView }: WorkspaceProps) {
 
   useEffect(() => {
     void loadStudyArea(studyAreaId);
-    void loadScenarios();
-    void syncLayers();
+    void checkBackend().then((up) => {
+      if (up) {
+        void loadScenarios();
+        void syncLayers();
+      }
+    });
+    const unsubscribe = onBackendStatus((up) => {
+      if (up) {
+        void loadScenarios();
+        void syncLayers();
+      }
+    });
+    return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

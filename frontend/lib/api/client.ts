@@ -38,10 +38,17 @@ function setBackendUp(up: boolean) {
   backendUp = up;
   if (changed) {
     if (!up) {
-      console.error(
-        "[NAGAR-X] Backend unreachable at " + API_BASE +
-        (BACKEND_REQUIRED ? " - BACKEND REQUIRED MODE ACTIVE." : " - serving DEMO DATA.")
-      );
+      const msg =
+        "[NAGAR-X] Backend unreachable at " +
+        API_BASE +
+        (BACKEND_REQUIRED
+          ? " - BACKEND REQUIRED MODE ACTIVE."
+          : " - operating in offline Demo Mode.");
+      if (BACKEND_REQUIRED) {
+        console.warn(msg);
+      } else {
+        console.info(msg);
+      }
     } else {
       console.info("[NAGAR-X] Backend connected at " + API_BASE);
     }
@@ -92,46 +99,54 @@ export interface BackendProbeStatus {
   detail: string;
 }
 
+let inflightProbe: Promise<BackendProbeStatus> | null = null;
+
 export async function probeBackendStatus(): Promise<BackendProbeStatus> {
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), T_PROBE);
-    const res = await fetch(API_BASE + "/ready", { signal: ctrl.signal });
-    clearTimeout(t);
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      const ready = Boolean(data?.ready);
-      setBackendUp(ready);
-      return {
-        apiReachable: true,
-        dbReady: ready,
-        detail: ready
-          ? "FastAPI & PostGIS spatial database connected"
-          : "FastAPI reachable, PostGIS database not ready",
-      };
-    }
-    if (res.status === 503) {
+  if (inflightProbe) return inflightProbe;
+  inflightProbe = (async (): Promise<BackendProbeStatus> => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), T_PROBE);
+      const res = await fetch(API_BASE + "/ready", { signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const ready = Boolean(data?.ready);
+        setBackendUp(ready);
+        return {
+          apiReachable: true,
+          dbReady: ready,
+          detail: ready
+            ? "FastAPI & PostGIS spatial database connected"
+            : "FastAPI reachable, PostGIS database not ready",
+        };
+      }
+      if (res.status === 503) {
+        setBackendUp(false);
+        return {
+          apiReachable: true,
+          dbReady: false,
+          detail: "FastAPI reachable, PostGIS spatial database offline (HTTP 503)",
+        };
+      }
       setBackendUp(false);
       return {
-        apiReachable: true,
+        apiReachable: false,
         dbReady: false,
-        detail: "FastAPI reachable, PostGIS spatial database offline (HTTP 503)",
+        detail: `Backend unavailable (HTTP ${res.status})`,
+      };
+    } catch {
+      setBackendUp(false);
+      return {
+        apiReachable: false,
+        dbReady: false,
+        detail: "Backend unreachable — operating in offline Demo Mode",
       };
     }
-    setBackendUp(false);
-    return {
-      apiReachable: false,
-      dbReady: false,
-      detail: `Backend unavailable (HTTP ${res.status})`,
-    };
-  } catch {
-    setBackendUp(false);
-    return {
-      apiReachable: false,
-      dbReady: false,
-      detail: "Backend unreachable — operating in offline Demo Mode",
-    };
-  }
+  })().finally(() => {
+    inflightProbe = null;
+  });
+  return inflightProbe;
 }
 
 export async function checkBackend(): Promise<boolean> {

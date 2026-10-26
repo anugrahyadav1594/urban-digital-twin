@@ -33,7 +33,7 @@ export const useScenarioStore = create<Store>((set, get) => ({
       const data = await api.listScenarios();
       set({ scenarios: data, activeId: get().activeId || (data[0]?.id ?? ""), loading: false });
     } catch (err: any) {
-      console.error("Failed to load scenarios:", err);
+      console.warn("Failed to load scenarios:", err);
       set({ error: err.message || "Failed to load scenarios", loading: false });
     }
   },
@@ -47,7 +47,7 @@ export const useScenarioStore = create<Store>((set, get) => ({
         loading: false
       }));
     } catch (err: any) {
-      console.error("Failed to create scenario:", err);
+      console.warn("Failed to create scenario:", err);
       set({ error: err.message || "Scenario creation failed", loading: false });
       alert(`Scenario creation failed: ${err.message || "Backend error"}`);
     }
@@ -66,7 +66,7 @@ export const useScenarioStore = create<Store>((set, get) => ({
       const updatedList = await api.listScenarios();
       set({ scenarios: updatedList });
     } catch (err: any) {
-      console.error("Failed to persist change:", err);
+      console.warn("Failed to persist change:", err);
       alert(`Failed to persist scenario change: ${err.message || "Backend error"}`);
     }
   },
@@ -77,7 +77,7 @@ export const useScenarioStore = create<Store>((set, get) => ({
         scenarios: s.scenarios.map((x) => (x.id === id ? { ...x, status: updated.status } : x))
       }));
     } catch (err: any) {
-      console.error("Failed to update status:", err);
+      console.warn("Failed to update status:", err);
       alert(`Status update failed: ${err.message || "Backend error"}`);
     }
   },
@@ -88,7 +88,7 @@ export const useScenarioStore = create<Store>((set, get) => ({
         scenarios: s.scenarios.map((x) => (x.id === id ? { ...x, populationGrowthPct: updated.populationGrowthPct } : x))
       }));
     } catch (err: any) {
-      console.error("Failed to update growth:", err);
+      console.warn("Failed to update growth:", err);
       alert(`Growth update failed: ${err.message || "Backend error"}`);
     }
   }

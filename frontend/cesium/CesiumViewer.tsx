@@ -11,7 +11,7 @@ import {
   renderStudyAreaNetworkOnGlobe,
   syncRouteAnalysisOverlay,
 } from "./routeAnalysisLayer";
-import { api } from "@/lib/api/client";
+import { api, checkBackend } from "@/lib/api/client";
 import { mapBridge } from "./map-bridge";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
@@ -1142,30 +1142,28 @@ export default function CesiumViewer() {
         // initial layer visibility from the store
         /* ── swap the procedural city for real PostGIS geometry ──
            The synthetic entities above are the offline fallback. If the
-           backend answers, every live layer is cleared and redrawn from the
-           database, and the layer panel counts are updated to match what is
-           actually on the globe. */
-        try {
-          const drawn = await loadAllLive(Cesium, ds);
-          const total = Object.values(drawn).reduce((a, b) => a + b, 0);
-          if (total > 0) {
-            liveLoadedRef.current = true;
-            // Counts in the layer panel come from GET /layers (true DB totals);
-            // `drawn` may be lower because of the render caps, so it is logged
-            // for diagnostics rather than written back over the real numbers.
-            console.info("[cesium] live data drawn", drawn);
-            // Diagnostics handle: lets `window.__nagarx.liveCounts` and the
-            // viewer be inspected from the console / e2e tests.
-            (window as any).__nagarx = {
-              viewer,
-              dataSources: ds,
-              liveCounts: drawn
-            };
-          } else {
-            console.warn("[cesium] backend returned no geometry - keeping demo city");
+           backend answers ready (/api/v1/ready -> 200), every live layer is
+           cleared and redrawn from PostGIS; otherwise skip live calls cleanly
+           and render the bundled offline study-area dataset without 504 noise. */
+        const backendReady = await checkBackend();
+        if (backendReady) {
+          try {
+            const drawn = await loadAllLive(Cesium, ds);
+            const total = Object.values(drawn).reduce((a, b) => a + b, 0);
+            if (total > 0) {
+              liveLoadedRef.current = true;
+              console.info("[cesium] live data drawn", drawn);
+              (window as any).__nagarx = {
+                viewer,
+                dataSources: ds,
+                liveCounts: drawn
+              };
+            } else {
+              console.info("[cesium] backend returned no geometry - using bundled study-area dataset");
+            }
+          } catch (e) {
+            console.warn("[cesium] live layer load failed - keeping offline dataset", e);
           }
-        } catch (e) {
-          console.warn("[cesium] live layer load failed - keeping demo city", e);
         }
 
         // If live PostGIS layers were not drawn, render active offline study area dataset
@@ -1186,26 +1184,22 @@ export default function CesiumViewer() {
 
         useLayerStore.getState().layers.forEach((l) => { if (ds[l.id]) ds[l.id].show = l.visible; });
 
-        /* ── point "Home" at the real data ──
-           GET /city returns `center`, computed by the backend from the union
-           extent of roads+parcels+buildings. Trust it over the compiled-in
-           constant: if the ETL bbox moves, or a different area is ingested,
-           the camera follows the data instead of a stale literal. Guarded so
-           a demo-mode / offline response cannot fling the camera to null
-           island. */
-        try {
-          const info: any = await api.getCity();
-          const c = info?.center;
-          const lon = Number(c?.lon), lat = Number(c?.lat);
-          if (liveLoadedRef.current && Number.isFinite(lon) && Number.isFinite(lat) &&
-              Math.abs(lon) <= 180 && Math.abs(lat) <= 90 &&
-              !(Math.abs(lon) < 0.001 && Math.abs(lat) < 0.001)) {
-            homeTargetRef.current = { lon, lat };
-            console.info("[cesium] home target from /city:", lon.toFixed(5), lat.toFixed(5),
-                         info?.name ?? "");
+        /* ── point "Home" at the real data when PostGIS is live ── */
+        if (backendReady && liveLoadedRef.current) {
+          try {
+            const info: any = await api.getCity();
+            const c = info?.center;
+            const lon = Number(c?.lon), lat = Number(c?.lat);
+            if (Number.isFinite(lon) && Number.isFinite(lat) &&
+                Math.abs(lon) <= 180 && Math.abs(lat) <= 90 &&
+                !(Math.abs(lon) < 0.001 && Math.abs(lat) < 0.001)) {
+              homeTargetRef.current = { lon, lat };
+              console.info("[cesium] home target from /city:", lon.toFixed(5), lat.toFixed(5),
+                           info?.name ?? "");
+            }
+          } catch {
+            console.info("[cesium] /city unavailable - using study area center fallback");
           }
-        } catch {
-          console.warn("[cesium] /city unavailable - using study area center fallback");
         }
 
         const hc0 = homeTargetRef.current;

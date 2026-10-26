@@ -91,14 +91,14 @@ npm run dev          # Starts Next.js on http://0.0.0.0:3000
 
 1. Copy `.env.example` to `.env` and start PostGIS:
    ```bash
-   cp .env.example .env
-   docker compose up -d postgis
+   cp -n .env.example .env
+   docker compose up -d db
    ```
-2. Install backend dependencies and ingest OSM data (if initializing a fresh DB):
+2. Install backend dependencies and seed/ingest OSM data (if initializing a fresh DB):
    ```bash
    python3 -m venv .venv
    .venv/bin/pip install -r backend/requirements.txt
-   .venv/bin/python -m etl.ingest_osm
+   .venv/bin/python db/seed_demo.py
    ```
 3. Start the FastAPI server:
    ```bash
