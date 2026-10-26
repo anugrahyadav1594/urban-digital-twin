@@ -1,5 +1,5 @@
 import Workspace from "@/components/layout/Workspace";
 
 export default function WorkspacePage() {
-  return <Workspace />;
+  return <Workspace initialView="map" />;
 }

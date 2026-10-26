@@ -4,7 +4,10 @@ export const CITY_CENTER = {
 };
 
 export const ION_TOKEN = process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN ?? "";
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+export const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL && process.env.NEXT_PUBLIC_API_BASE_URL.trim().length > 0
+    ? process.env.NEXT_PUBLIC_API_BASE_URL.trim()
+    : "/api/v1";
 
-export const NAVBAR_HEIGHT = 66;
+export const NAVBAR_HEIGHT = 56;
 export const TASKBAR_HEIGHT = 48;

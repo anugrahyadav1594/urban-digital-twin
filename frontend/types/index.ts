@@ -139,3 +139,6 @@ export type SuitabilityRequest = {
   useNetwork?: boolean;
   enforceMaxTravel?: boolean;
 };
+
+export * from "./route-analysis";
+

@@ -19,13 +19,10 @@ export default function ChangesPanel() {
 
   const changes = active.changes || [];
 
-  // Compute aggregate plan impact metrics from proposed changes
+  // Compute aggregate change breakdown from actual persisted scenario edits
   const facilityCount = changes.filter((c) => c.type === "facility").length;
   const roadCount = changes.filter((c) => c.type === "road").length;
   const zoningCount = changes.filter((c) => c.type === "zoning").length;
-
-  const estimatedCostMs = (facilityCount * 12.5 + roadCount * 8.0 + zoningCount * 2.0).toFixed(1);
-  const estimatedPopServed = (facilityCount * 45000 + roadCount * 28000).toLocaleString();
 
   return (
     <div>
@@ -85,15 +82,15 @@ export default function ChangesPanel() {
         </div>
       )}
 
-      {/* Aggregate Impact Summary */}
+      {/* Aggregate Change Breakdown */}
       {changes.length > 0 && (
         <>
-          <SectionTitle>Estimated Package Impact</SectionTitle>
+          <SectionTitle>Recorded Edit Breakdown</SectionTitle>
 
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr",
+              gridTemplateColumns: "1fr 1fr 1fr",
               gap: 6,
               marginBottom: 12
             }}
@@ -106,9 +103,9 @@ export default function ChangesPanel() {
                 borderRadius: "6px"
               }}
             >
-              <div className="muted" style={{ fontSize: 10 }}>Est. Capital Cost</div>
-              <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--warn)", marginTop: 2 }}>
-                ${estimatedCostMs} M
+              <div className="muted" style={{ fontSize: 10 }}>Facilities</div>
+              <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)", marginTop: 2 }}>
+                {facilityCount}
               </div>
             </div>
 
@@ -120,9 +117,23 @@ export default function ChangesPanel() {
                 borderRadius: "6px"
               }}
             >
-              <div className="muted" style={{ fontSize: 10 }}>Pop. Benefiting</div>
+              <div className="muted" style={{ fontSize: 10 }}>Road Edits</div>
+              <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--warn)", marginTop: 2 }}>
+                {roadCount}
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: "8px 10px",
+                background: "rgba(0,0,0,0.25)",
+                border: "1px solid var(--line-soft)",
+                borderRadius: "6px"
+              }}
+            >
+              <div className="muted" style={{ fontSize: 10 }}>Zoning Edits</div>
               <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--good)", marginTop: 2 }}>
-                +{estimatedPopServed}
+                {zoningCount}
               </div>
             </div>
           </div>

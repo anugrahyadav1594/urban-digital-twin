@@ -37,6 +37,8 @@ export type BridgeImpl = {
   showRegion: (regionId: string) => Promise<RegionLoadResult>;
   clearRegion: () => void;
   setRegionLayerVisible: (layer: string, visible: boolean) => void;
+  flyToCoordinate: (lon: number, lat: number, heightM?: number) => void;
+  fitToAnalysis: () => void;
 };
 
 /** What the viewer reports back after drawing a comparison region. */
@@ -110,5 +112,8 @@ export const mapBridge = {
       : Promise.resolve({ counts: {}, status: { error: "viewer not ready" }, total: 0 }),
   clearRegion: () => (impl.clearRegion ?? noop)(),
   setRegionLayerVisible: (layer: string, v: boolean) =>
-    (impl.setRegionLayerVisible ?? noop)(layer, v)
+    (impl.setRegionLayerVisible ?? noop)(layer, v),
+  flyToCoordinate: (lon: number, lat: number, heightM?: number) =>
+    (impl.flyToCoordinate ?? noop)(lon, lat, heightM),
+  fitToAnalysis: () => (impl.fitToAnalysis ?? noop)(),
 };

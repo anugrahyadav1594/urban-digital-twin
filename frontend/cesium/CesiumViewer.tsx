@@ -1,13 +1,21 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { CITY_CENTER, ION_TOKEN } from "@/lib/constants";
-import { FACILITIES, FLOOD_ZONE, PARCELS, ROADS, ZONE_COLOR } from "@/lib/city-model";
+import { ION_TOKEN } from "@/lib/constants";
+import { FACILITIES, PARCELS, ROADS, ZONE_COLOR } from "@/lib/city-model";
+import { STUDY_AREAS } from "@/lib/routing-engine";
 import { loadAllLive } from "./liveData";
 import { loadRegion, flyToRegion, setRegionLayerVisible } from "./regionData";
+import {
+  fitViewerToRouteAnalysis,
+  loadRegionalReferenceOverlays,
+  renderStudyAreaNetworkOnGlobe,
+  syncRouteAnalysisOverlay,
+} from "./routeAnalysisLayer";
 import { api } from "@/lib/api/client";
 import { mapBridge } from "./map-bridge";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
+import { useRouteAnalysisStore } from "@/stores/route-analysis-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { useWindowStore } from "@/stores/window-store";
 import type { LayerKind, ResultEntity } from "@/types";
@@ -148,7 +156,11 @@ export default function CesiumViewer() {
   /* Real camera target. Seeded from CITY_CENTER (a static guess) and replaced
      with the true data centroid as soon as GET /city reports the extent, so
      "Home" always returns to the city that is actually in the database. */
-  const homeTargetRef = useRef({ lon: CITY_CENTER.lon, lat: CITY_CENTER.lat });
+  const homeTargetRef = useRef({ lon: STUDY_AREAS.panvel_kalundre_osm.center.lon, lat: STUDY_AREAS.panvel_kalundre_osm.center.lat });
+  const cesiumRef = useRef<any>(null);
+  const viewerRef = useRef<any>(null);
+  const dsRef = useRef<Record<string, any> | null>(null);
+  const liveLoadedRef = useRef(false);
   const [isOrbitView, setIsOrbitView] = useState(false);
   const isOrbitViewRef = useRef(false);
   const { setReady, setError, setCameraText } = useMapStore();
@@ -158,6 +170,18 @@ export default function CesiumViewer() {
   const year = useMapStore((s) => s.year);
   const drawMode = useMapStore((s) => s.drawMode);
   const setDrawnPath = useMapStore((s) => s.setDrawnPath);
+
+  const studyAreaId = useRouteAnalysisStore((s) => s.studyAreaId);
+  const datasets = useRouteAnalysisStore((s) => s.datasets);
+  const dataMode = useRouteAnalysisStore((s) => s.dataMode);
+  const origin = useRouteAnalysisStore((s) => s.origin);
+  const destination = useRouteAnalysisStore((s) => s.destination);
+  const draftScenario = useRouteAnalysisStore((s) => s.draftScenario);
+  const affectedPreview = useRouteAnalysisStore((s) => s.affectedPreview);
+  const routeResult = useRouteAnalysisStore((s) => s.result);
+  const interactionMode = useRouteAnalysisStore((s) => s.interactionMode);
+  const drawingVertices = useRouteAnalysisStore((s) => s.drawingVertices);
+  const rightPanelOpen = useRouteAnalysisStore((s) => s.rightPanelOpen);
 
   useEffect(() => {
     if (bootedRef.current || !hostRef.current) return;
@@ -330,12 +354,17 @@ export default function CesiumViewer() {
         /* ── data sources, one per logical layer ─────────────── */
         const ds: Record<string, any> = {};
         const currentLayers = useLayerStore.getState().layers;
-        for (const key of ["buildings", "parcels", "roads", "highways", "landuse", "population", "water", "flood", "facilities", "candidates", "proposals", "emergency", "region"]) {
+        for (const key of ["buildings", "parcels", "roads", "highways", "landuse", "population", "water", "flood", "facilities", "candidates", "proposals", "emergency", "region", "routeAnalysis"]) {
           ds[key] = new Cesium.CustomDataSource(key);
           const found = currentLayers.find((l) => l.id === key);
           if (found) ds[key].show = found.visible;
           viewer.dataSources.add(ds[key]);
         }
+        ds.routeAnalysis.show = true;
+        cesiumRef.current = Cesium;
+        viewerRef.current = viewer;
+        dsRef.current = ds;
+        void loadRegionalReferenceOverlays(Cesium, ds);
 
         const C = (hex: string, a = 1) => Cesium.Color.fromCssColorString(hex).withAlpha(a);
         const baseHeights = new Map<string, number>();
@@ -474,8 +503,51 @@ export default function CesiumViewer() {
 
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         handler.setInputAction((click: any) => {
+          const clickRay = viewer.camera.getPickRay(click.position);
+          const groundPt = clickRay ? viewer.scene.globe.pick(clickRay, viewer.scene) : undefined;
+          const ellipsoidPt = viewer.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
+          const resolvedGround = groundPt ?? ellipsoidPt;
+
+          let clickedLon: number | null = null;
+          let clickedLat: number | null = null;
+          if (resolvedGround) {
+            const cg = Cesium.Cartographic.fromCartesian(resolvedGround);
+            const lonVal = Number(Cesium.Math.toDegrees(cg.longitude));
+            const latVal = Number(Cesium.Math.toDegrees(cg.latitude));
+            clickedLon = lonVal;
+            clickedLat = latVal;
+            useMapStore.getState().setLastClick({ lon: lonVal, lat: latVal });
+          }
+
+          // 1. Primary NagarX disaster-aware route workflow interaction modes
+          const routeInteraction = useRouteAnalysisStore.getState().interactionMode;
+          if (routeInteraction === "toggle_road_segment") {
+            const pickedRoad = viewer.scene.pick(click.position);
+            const roadId = pickedRoad?.id?.id as string | undefined;
+            if (
+              roadId &&
+              (roadId.startsWith("osm_way_") ||
+                roadId.startsWith("grid_") ||
+                roadId.startsWith("r_"))
+            ) {
+              useRouteAnalysisStore.getState().toggleRoadInScenario(roadId);
+            }
+            return;
+          }
+          if (
+            routeInteraction !== "navigate" &&
+            clickedLon !== null &&
+            clickedLat !== null
+          ) {
+            useRouteAnalysisStore
+              .getState()
+              .handleMapCoordinateClick(clickedLon, clickedLat);
+            return;
+          }
+
+          // 2. Advanced planning draw modes
           const mode = useMapStore.getState().drawMode;
-          const cart = viewer.scene.pickPosition(click.position) ?? viewer.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
+          const cart = viewer.scene.pickPosition(click.position) ?? ellipsoidPt;
 
           if (mode !== "select" && cart) {
             const carto = Cesium.Cartographic.fromCartesian(cart);
@@ -516,25 +588,15 @@ export default function CesiumViewer() {
             }
           }
 
-          // Record every map click in lon/lat so location-driven panels
-          // (e.g. Emergency Response) can use the map as a coordinate picker.
-          const clickRay = viewer.camera.getPickRay(click.position);
-          const groundPt = clickRay ? viewer.scene.globe.pick(clickRay, viewer.scene) : undefined;
-          if (groundPt) {
-            const cg = Cesium.Cartographic.fromCartesian(groundPt);
-            useMapStore.getState().setLastClick({
-              lon: Cesium.Math.toDegrees(cg.longitude),
-              lat: Cesium.Math.toDegrees(cg.latitude)
-            });
-          }
-
           const picked = viewer.scene.pick(click.position);
           const id = picked?.id?.id as string | undefined;
-          if (!id) { select(null); clearHighlight(); return; }
+          if (!id || id.startsWith("nx_")) { select(null); clearHighlight(); return; }
           const ref = (id.startsWith("pf_") || id.startsWith("lu_") || id.startsWith("pop_") || id.startsWith("fl_")) ? id.slice(id.indexOf("_") + 1) : id;
           select(ref);
           applyHighlight([ref]);
-          openWindow("inspector");
+          if (useWindowStore.getState().windows.inspector?.visible) {
+            openWindow("inspector");
+          }
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         /* camera readout & screen-anchored light update & altitude 3D limit check */
@@ -1044,12 +1106,35 @@ export default function CesiumViewer() {
           setYear: (y: number) => {
             const growth = 1 + Math.max(0, (y - 2026) / 14) * 0.55;
             ds.buildings.entities.values.forEach((e: any) => {
+              if (!e.box || !e.position) return;
               const base = baseHeights.get(e.id) ?? 10;
               const h = base * growth;
               const dim = e.box.dimensions.getValue(Cesium.JulianDate.now());
               e.box.dimensions = new Cesium.Cartesian3(dim.x, dim.y, h);
               const carto = Cesium.Cartographic.fromCartesian(e.position.getValue(Cesium.JulianDate.now()));
               e.position = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, h / 2);
+            });
+          },
+          flyToCoordinate: (lon: number, lat: number, heightM = 2200) => {
+            viewer.camera.flyTo({
+              destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.012, heightM),
+              orientation: {
+                heading: 0,
+                pitch: Cesium.Math.toRadians(-48),
+                roll: 0,
+              },
+              duration: 1.0,
+            });
+          },
+          fitToAnalysis: () => {
+            const st = useRouteAnalysisStore.getState();
+            const area = STUDY_AREAS[st.studyAreaId];
+            fitViewerToRouteAnalysis(Cesium, viewer, {
+              origin: st.origin,
+              destination: st.destination,
+              scenario: st.draftScenario,
+              result: st.result,
+              fallbackBounds: area.bounds,
             });
           }
         });
@@ -1064,6 +1149,7 @@ export default function CesiumViewer() {
           const drawn = await loadAllLive(Cesium, ds);
           const total = Object.values(drawn).reduce((a, b) => a + b, 0);
           if (total > 0) {
+            liveLoadedRef.current = true;
             // Counts in the layer panel come from GET /layers (true DB totals);
             // `drawn` may be lower because of the render caps, so it is logged
             // for diagnostics rather than written back over the real numbers.
@@ -1082,6 +1168,22 @@ export default function CesiumViewer() {
           console.warn("[cesium] live layer load failed - keeping demo city", e);
         }
 
+        // If live PostGIS layers were not drawn, render active offline study area dataset
+        const initState = useRouteAnalysisStore.getState();
+        const initDataset = initState.datasets[initState.studyAreaId];
+        if (!liveLoadedRef.current && initDataset) {
+          renderStudyAreaNetworkOnGlobe(Cesium, ds, initDataset);
+        }
+        syncRouteAnalysisOverlay(Cesium, ds.routeAnalysis, {
+          origin: initState.origin,
+          destination: initState.destination,
+          scenario: initState.draftScenario,
+          affectedPreview: initState.affectedPreview,
+          result: initState.result,
+          interactionMode: initState.interactionMode,
+          drawingVertices: initState.drawingVertices,
+        });
+
         useLayerStore.getState().layers.forEach((l) => { if (ds[l.id]) ds[l.id].show = l.visible; });
 
         /* ── point "Home" at the real data ──
@@ -1095,7 +1197,7 @@ export default function CesiumViewer() {
           const info: any = await api.getCity();
           const c = info?.center;
           const lon = Number(c?.lon), lat = Number(c?.lat);
-          if (Number.isFinite(lon) && Number.isFinite(lat) &&
+          if (liveLoadedRef.current && Number.isFinite(lon) && Number.isFinite(lat) &&
               Math.abs(lon) <= 180 && Math.abs(lat) <= 90 &&
               !(Math.abs(lon) < 0.001 && Math.abs(lat) < 0.001)) {
             homeTargetRef.current = { lon, lat };
@@ -1103,7 +1205,7 @@ export default function CesiumViewer() {
                          info?.name ?? "");
           }
         } catch {
-          console.warn("[cesium] /city unavailable - using CITY_CENTER fallback");
+          console.warn("[cesium] /city unavailable - using study area center fallback");
         }
 
         const hc0 = homeTargetRef.current;
@@ -1137,6 +1239,76 @@ export default function CesiumViewer() {
   useEffect(() => { mapBridge.setYear(year); }, [year]);
   useEffect(() => { mapBridge.setDrawMode(drawMode); }, [drawMode]);
 
+  /* sync study-area road/water/building network when loaded or switched */
+  useEffect(() => {
+    const Cesium = cesiumRef.current;
+    const ds = dsRef.current;
+    const viewer = viewerRef.current;
+    const activeDataset = datasets[studyAreaId];
+    const areaDef = STUDY_AREAS[studyAreaId];
+    homeTargetRef.current = { lon: areaDef.center.lon, lat: areaDef.center.lat };
+
+    if (!Cesium || !ds) return;
+    if (activeDataset && (!liveLoadedRef.current || dataMode === "demo" || areaDef.isSyntheticBenchmark)) {
+      renderStudyAreaNetworkOnGlobe(Cesium, ds, activeDataset);
+    }
+    if (viewer) {
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(
+          areaDef.center.lon,
+          areaDef.center.lat - 0.025,
+          areaDef.cameraHeightM
+        ),
+        orientation: {
+          heading: 0,
+          pitch: Cesium.Math.toRadians(-45),
+          roll: 0,
+        },
+        duration: 1.0,
+      });
+    }
+  }, [studyAreaId, datasets, dataMode]);
+
+  /* sync disaster-aware route analysis overlay (waypoints, hazard, routes) */
+  useEffect(() => {
+    const Cesium = cesiumRef.current;
+    const ds = dsRef.current;
+    if (!Cesium || !ds?.routeAnalysis) return;
+    syncRouteAnalysisOverlay(Cesium, ds.routeAnalysis, {
+      origin,
+      destination,
+      scenario: draftScenario,
+      affectedPreview,
+      result: routeResult,
+      interactionMode,
+      drawingVertices,
+    });
+  }, [
+    origin,
+    destination,
+    draftScenario,
+    affectedPreview,
+    routeResult,
+    interactionMode,
+    drawingVertices,
+  ]);
+
+  /* auto-fit camera when a new route comparison completes */
+  useEffect(() => {
+    if (!routeResult) return;
+    const Cesium = cesiumRef.current;
+    const viewer = viewerRef.current;
+    if (!Cesium || !viewer) return;
+    const areaDef = STUDY_AREAS[studyAreaId];
+    fitViewerToRouteAnalysis(Cesium, viewer, {
+      origin: routeResult.originUsed,
+      destination: routeResult.destinationUsed,
+      scenario: routeResult.scenarioUsed,
+      result: routeResult,
+      fallbackBounds: areaDef.bounds,
+    });
+  }, [routeResult, studyAreaId]);
+
   const ready = useMapStore((s) => s.ready);
   const error = useMapStore((s) => s.error);
 
@@ -1146,11 +1318,13 @@ export default function CesiumViewer() {
 
       {ready && !error && (
         <div
+          className="cesium-globe-hud"
           style={{
             position: "absolute",
-            bottom: 64,
-            right: 20,
+            bottom: 20,
+            right: rightPanelOpen ? 426 : 16,
             zIndex: 10,
+            transition: "right 0.22s ease",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -1302,29 +1476,46 @@ export default function CesiumViewer() {
             </button>
           </div>
 
-          <button
-            className="btn"
-            style={{
-              width: "100%",
-              marginTop: 4,
-              padding: "6px 10px",
-              fontSize: 11,
-              fontWeight: 600,
-              borderRadius: 8,
-              letterSpacing: "0.03em",
-              background: "rgba(56, 189, 248, 0.15)",
-              borderColor: "rgba(56, 189, 248, 0.4)",
-              color: "#38bdf8",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 5
-            }}
-            title="Fly directly to city location using geodesic shortest route"
-            onClick={() => mapBridge.home()}
-          >
-            <HomeIcon /> Home
-          </button>
+          <div style={{ display: "flex", gap: 6, width: "100%", marginTop: 4 }}>
+            <button
+              className="btn"
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                fontSize: 10.5,
+                fontWeight: 600,
+                borderRadius: 8,
+                background: "rgba(56, 189, 248, 0.14)",
+                borderColor: "rgba(56, 189, 248, 0.4)",
+                color: "#38bdf8",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4
+              }}
+              title="Return camera to active study area"
+              onClick={() => mapBridge.home()}
+            >
+              <HomeIcon /> Area
+            </button>
+            <button
+              className="btn ghost"
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                fontSize: 10.5,
+                fontWeight: 600,
+                borderRadius: 8,
+                borderColor: "rgba(249, 115, 22, 0.45)",
+                color: "#fdba74",
+                background: "rgba(249, 115, 22, 0.1)"
+              }}
+              title="Fit camera to Origin, Destination, Hazard Zone, and Routes"
+              onClick={() => mapBridge.fitToAnalysis()}
+            >
+              Fit Route
+            </button>
+          </div>
         </div>
       )}
 

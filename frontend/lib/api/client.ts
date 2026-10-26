@@ -14,10 +14,13 @@ import type {
   WorkflowId, WorkflowStepResult, DecisionRecord, StartWorkflowRequest, PlanCandidatesRequest,
   PlanValidateRequest, PlanCommitRequest, StressSimulateRequest, StressRerouteRequest,
   StressMitigateRequest, ImproveGapRequest, ImprovePackageRequest, CompareEvaluateRequest,
-  CompareSelectRequest, ExplainDecisionRequest
+  CompareSelectRequest, ExplainDecisionRequest,
+  DisasterScenarioConfig, RouteComparisonResult, RouteCostMetric, RouteWaypoint, StudyAreaDefinition,
+  ComputedRouteLeg
 } from "@/types";
+import { computeInputSignature } from "../routing-engine";
 
-export const BACKEND_REQUIRED = process.env.NEXT_PUBLIC_BACKEND_REQUIRED !== "false";
+export const BACKEND_REQUIRED = process.env.NEXT_PUBLIC_BACKEND_REQUIRED === "true";
 
 let backendUp: boolean | null = null;
 
@@ -64,14 +67,16 @@ async function tryFetch<T>(
       headers: { "content-type": "application/json", ...(init?.headers || {}) }
     });
     clearTimeout(t);
-    // Backend responded — it is up, even if status is 4xx/5xx
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      setBackendUp(false);
+      throw new Error(`HTTP ${res.status}`);
+    }
     setBackendUp(true);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as T;
   } catch (err: any) {
-    // Only mark backend down on network/timeout errors, not HTTP error responses
     const msg = err?.message || "";
-    if (!msg.startsWith("HTTP ")) {
+    if (!msg.startsWith("HTTP ") || msg === "HTTP 502" || msg === "HTTP 503" || msg === "HTTP 504") {
       setBackendUp(false);
     }
     if (BACKEND_REQUIRED) {
@@ -81,12 +86,60 @@ async function tryFetch<T>(
   }
 }
 
-export async function checkBackend(): Promise<boolean> {
-  const r = await tryFetch<{ ready: boolean }>("/ready", undefined, T_PROBE);
-  return r !== null;
+export interface BackendProbeStatus {
+  apiReachable: boolean;
+  dbReady: boolean;
+  detail: string;
 }
 
-export const isDemoMode = () => backendUp !== true && !BACKEND_REQUIRED;
+export async function probeBackendStatus(): Promise<BackendProbeStatus> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), T_PROBE);
+    const res = await fetch(API_BASE + "/ready", { signal: ctrl.signal });
+    clearTimeout(t);
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const ready = Boolean(data?.ready);
+      setBackendUp(ready);
+      return {
+        apiReachable: true,
+        dbReady: ready,
+        detail: ready
+          ? "FastAPI & PostGIS spatial database connected"
+          : "FastAPI reachable, PostGIS database not ready",
+      };
+    }
+    if (res.status === 503) {
+      setBackendUp(false);
+      return {
+        apiReachable: true,
+        dbReady: false,
+        detail: "FastAPI reachable, PostGIS spatial database offline (HTTP 503)",
+      };
+    }
+    setBackendUp(false);
+    return {
+      apiReachable: false,
+      dbReady: false,
+      detail: `Backend unavailable (HTTP ${res.status})`,
+    };
+  } catch {
+    setBackendUp(false);
+    return {
+      apiReachable: false,
+      dbReady: false,
+      detail: "Backend unreachable — operating in offline Demo Mode",
+    };
+  }
+}
+
+export async function checkBackend(): Promise<boolean> {
+  const status = await probeBackendStatus();
+  return status.dbReady;
+}
+
+export const isDemoMode = () => backendUp !== true;
 
 /**
  * POST that surfaces the actual error.
@@ -558,4 +611,213 @@ export const api = {
 
   explainDecisionRecord: async (req: ExplainDecisionRequest): Promise<DecisionRecord> =>
     postWorkflow<ExplainDecisionRequest, DecisionRecord>("/workflows/explain/decision-record", req),
+
+  /**
+   * Live backend point-to-point baseline vs hazard-aware route comparison.
+   * Never silently substitutes demo data on failure — throws an explicit Error
+   * so the caller can surface the live failure honestly.
+   */
+  compareDisasterRoutes: async (params: {
+    studyArea: StudyAreaDefinition;
+    origin: RouteWaypoint;
+    destination: RouteWaypoint;
+    scenario: DisasterScenarioConfig;
+    costMetric: RouteCostMetric;
+    signal?: AbortSignal;
+  }): Promise<RouteComparisonResult> => {
+    const { studyArea, origin, destination, scenario, costMetric, signal } = params;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    if (signal) {
+      signal.addEventListener("abort", () => ctrl.abort(), { once: true });
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(API_BASE + "/emergency/route-compare", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          origin: { lon: origin.lon, lat: origin.lat, label: origin.label },
+          destination: {
+            lon: destination.lon,
+            lat: destination.lat,
+            label: destination.label,
+          },
+          scenario: {
+            name: scenario.name,
+            type: scenario.type,
+            active: scenario.active,
+            severity_mode: scenario.severityMode,
+            penalty_multiplier: scenario.penaltyMultiplier,
+            polygon:
+              scenario.geometryKind === "polygon" && scenario.polygon.length >= 3
+                ? scenario.polygon
+                : null,
+            center:
+              scenario.geometryKind === "circle" && scenario.center
+                ? scenario.center
+                : null,
+            radius_m:
+              scenario.geometryKind === "circle" ? scenario.radiusM : null,
+            affected_road_ids: scenario.affectedRoadIds,
+            slowed_road_ids: scenario.slowedRoadIds,
+          },
+          cost_metric: costMetric,
+        }),
+      });
+    } catch (err: any) {
+      clearTimeout(timer);
+      if (signal?.aborted) {
+        throw new Error("REQUEST_CANCELLED");
+      }
+      setBackendUp(false);
+      throw new Error(
+        err?.name === "AbortError"
+          ? "Live backend route analysis timed out after 30 s."
+          : "Live backend API could not be reached. Switch explicitly to Demo Mode to run on the local OSM dataset."
+      );
+    }
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        setBackendUp(false);
+      }
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errBody = await res.json();
+        detail = errBody?.detail || errBody?.error || detail;
+      } catch {
+        // ignore JSON parse failure on error body
+      }
+      throw new Error(`Live backend route analysis failed: ${detail}`);
+    }
+
+    let raw: any;
+    try {
+      raw = await res.json();
+    } catch {
+      throw new Error("Malformed non-JSON response payload from live backend.");
+    }
+
+    if (
+      !raw ||
+      typeof raw !== "object" ||
+      !raw.baseline_route ||
+      !raw.hazard_aware_route ||
+      !raw.comparison ||
+      !raw.affected_network
+    ) {
+      throw new Error(
+        "Malformed response payload from /emergency/route-compare: missing required route comparison fields."
+      );
+    }
+
+    const mapLeg = (leg: any): ComputedRouteLeg => ({
+      feasible: Boolean(leg.feasible),
+      path: Array.isArray(leg.path) ? leg.path : [],
+      distanceM: typeof leg.distance_m === "number" ? leg.distance_m : null,
+      travelTimeS:
+        typeof leg.travel_time_s === "number" ? leg.travel_time_s : null,
+      segmentCount: Number(leg.segment_count ?? 0),
+      affectedSegmentCount: Number(leg.affected_segment_count ?? 0),
+      affectedRoadIds: Array.isArray(leg.affected_road_ids)
+        ? leg.affected_road_ids
+        : [],
+      affectedRoadNames: Array.isArray(leg.affected_road_ids)
+        ? leg.affected_road_ids
+        : [],
+      roadSequence: [],
+      exposedDistanceM: Number(leg.exposed_distance_m ?? 0),
+      snapOriginM: Number(leg.snap_origin_m ?? 0),
+      snapDestinationM: Number(leg.snap_destination_m ?? 0),
+    });
+
+    const aff = raw.affected_network;
+    const comp = raw.comparison;
+
+    return {
+      baselineRoute: mapLeg(raw.baseline_route),
+      hazardAwareRoute: mapLeg(raw.hazard_aware_route),
+      affectedNetwork: {
+        closedEdgeCount: Number(aff.closed_edge_count ?? 0),
+        penalizedEdgeCount: Number(aff.penalized_edge_count ?? 0),
+        closedRoadIds: Array.isArray(aff.closed_road_ids)
+          ? aff.closed_road_ids
+          : [],
+        penalizedRoadIds: Array.isArray(aff.penalized_road_ids)
+          ? aff.penalized_road_ids
+          : [],
+        closedRoadNames: Array.isArray(aff.closed_road_ids)
+          ? aff.closed_road_ids
+          : [],
+        penalizedRoadNames: Array.isArray(aff.penalized_road_ids)
+          ? aff.penalized_road_ids
+          : [],
+        closedLengthM: 0,
+        penalizedLengthM: 0,
+        closedSegments: Array.isArray(aff.closed_segments)
+          ? aff.closed_segments
+          : [],
+        penalizedSegments: Array.isArray(aff.penalized_segments)
+          ? aff.penalized_segments
+          : [],
+      },
+      comparison: {
+        baselineFeasible: Boolean(comp.baseline_feasible),
+        alternativeFeasible: Boolean(comp.alternative_feasible),
+        routesIdentical: Boolean(comp.routes_identical),
+        distanceDeltaM:
+          typeof comp.distance_delta_m === "number"
+            ? comp.distance_delta_m
+            : null,
+        distanceDeltaPct:
+          typeof comp.distance_delta_pct === "number"
+            ? comp.distance_delta_pct
+            : null,
+        timeDeltaS:
+          typeof comp.time_delta_s === "number" ? comp.time_delta_s : null,
+        timeDeltaPct:
+          typeof comp.time_delta_pct === "number" ? comp.time_delta_pct : null,
+        avoidedSegments:
+          typeof comp.avoided_segments === "number"
+            ? comp.avoided_segments
+            : null,
+        exposureReductionM:
+          typeof comp.exposure_reduction_m === "number"
+            ? comp.exposure_reduction_m
+            : null,
+        summary: String(comp.summary ?? ""),
+        assumptions: Array.isArray(comp.assumptions) ? comp.assumptions : [],
+        limitations: Array.isArray(comp.limitations) ? comp.limitations : [],
+        warnings: Array.isArray(comp.warnings) ? comp.warnings : [],
+      },
+      computationTimeMs: Number(raw.computation_time_ms ?? 0),
+      originUsed: origin,
+      destinationUsed: destination,
+      scenarioUsed: structuredClone(scenario),
+      provenance: {
+        dataMode: "live",
+        executionEngine: "backend_networkx_dijkstra",
+        studyAreaId: studyArea.id,
+        studyAreaName: studyArea.name,
+        networkSourceLabel: `PostGIS Live Spatial Database (dataset v${raw.provenance?.dataset_version ?? 1})`,
+        algorithm: String(
+          raw.provenance?.algorithm ?? "network.disaster_route_compare"
+        ),
+        costMetric,
+        computedAtIso: new Date().toISOString(),
+        inputSignature: computeInputSignature({
+          studyAreaId: studyArea.id,
+          origin,
+          destination,
+          scenario,
+          costMetric,
+          dataMode: "live",
+        }),
+      },
+    };
+  },
 };

@@ -5,6 +5,7 @@ import { useWorkflowStore } from "@/stores/workflow-store";
 import { WORKFLOWS, type WorkflowId } from "@/lib/workflows";
 import { mapBridge } from "@/cesium/map-bridge";
 import { PARCELS } from "@/lib/city-model";
+import { useRouteAnalysisStore } from "@/stores/route-analysis-store";
 import { useSelectionStore } from "@/stores/selection-store";
 
 type Cmd = { label: string; hint: string; run: () => void };
@@ -32,7 +33,33 @@ export default function CommandPalette() {
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 10); }, [open]);
 
   const commands: Cmd[] = useMemo(() => {
-    const list: Cmd[] = [];
+    const list: Cmd[] = [
+      {
+        label: "NagarX · Run Demonstration Flood Scenario",
+        hint: "route analysis",
+        run: () => void useRouteAnalysisStore.getState().loadSampleAndStart("preset_kalundre_flood"),
+      },
+      {
+        label: "NagarX · Fit Camera to Active Routes & Hazard",
+        hint: "camera",
+        run: () => mapBridge.fitToAnalysis(),
+      },
+      {
+        label: "NagarX · Open Mission Overview",
+        hint: "view",
+        run: () => useRouteAnalysisStore.getState().setWorkspaceView("overview"),
+      },
+      {
+        label: "NagarX · Open 3D Route Workspace",
+        hint: "view",
+        run: () => useRouteAnalysisStore.getState().setWorkspaceView("map"),
+      },
+      {
+        label: "NagarX · Reset Demo State",
+        hint: "reset",
+        run: () => void useRouteAnalysisStore.getState().resetDemo(),
+      },
+    ];
 
     // Workflow commands first
     (Object.keys(WORKFLOWS) as WorkflowId[]).forEach((wfId) => {

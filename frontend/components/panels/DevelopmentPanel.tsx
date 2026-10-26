@@ -101,7 +101,7 @@ export default function DevelopmentPanel() {
     setBusy("cmp"); setErr(null);
     try {
       const workflowStore = useWorkflowStore.getState();
-      let sessId = workflowStore.context.backendSessionId;
+      const sessId = workflowStore.context.backendSessionId;
       if (sessId) {
         const simRes = await api.improveSimulate(sessId);
         workflowStore.syncFromBackend(simRes);

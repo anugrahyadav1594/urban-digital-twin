@@ -7,13 +7,18 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
 from sqlalchemy.orm import Session
 
 from ..core.config import get_settings
 from ..engines.contracts import Provenance
 from ..engines.crs import to_analysis, to_storage
 from ..engines.network import build_graph
+from ..engines.network.disaster_routing import (
+    ALGORITHM as DISASTER_ROUTE_ALGORITHM,
+    DisasterScenarioSpec,
+    compare_disaster_routes,
+)
 from ..engines.network.emergency_routing import (
     DEFAULT_TURNOUT_SECONDS, compare_routes, degrade_graph, route_to_incident)
 from ..engines.simulation.disaster import (
@@ -320,6 +325,86 @@ class EmergencyService:
                                 for w in r.warnings}),
             "impact": delta.to_dict(),
         }
+
+    # ------------------------------------------------------------------
+    def compare_od_routes(
+        self,
+        origin_lon: float,
+        origin_lat: float,
+        destination_lon: float,
+        destination_lat: float,
+        scenario_name: str = "Simulated Disaster Scenario",
+        scenario_type: str = "flood",
+        active: bool = True,
+        severity_mode: str = "closed",
+        penalty_multiplier: float = 3.0,
+        polygon_lonlat: Sequence[Sequence[float]] | None = None,
+        center_lonlat: Sequence[float] | None = None,
+        radius_m: float | None = None,
+        affected_road_ids: Sequence[str] = (),
+        slowed_road_ids: Sequence[str] = (),
+        cost_metric: str = "time",
+        scenario_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Compare baseline and hazard-aware routes between origin and destination."""
+        roads = self.repo.roads()
+        if not roads:
+            return {"error": "no road data available in PostGIS database"}
+
+        hz_geom = None
+        if polygon_lonlat and len(polygon_lonlat) >= 3:
+            pts = [(float(c[0]), float(c[1])) for c in polygon_lonlat]
+            if pts[0] != pts[-1]:
+                pts.append(pts[0])
+            poly_wgs84 = Polygon(pts)
+            if not poly_wgs84.is_valid or poly_wgs84.is_empty:
+                raise ValueError("Hazard polygon is self-intersecting or invalid.")
+            hz_geom = to_analysis(poly_wgs84, self.cfg.analysis_srid)
+        elif center_lonlat and len(center_lonlat) == 2 and radius_m and radius_m > 0:
+            c_proj = self._point(float(center_lonlat[0]), float(center_lonlat[1]))
+            hz_geom = c_proj.buffer(float(radius_m))
+
+        spec = DisasterScenarioSpec(
+            name=scenario_name,
+            scenario_type=scenario_type,
+            active=active,
+            severity_mode=severity_mode,
+            penalty_multiplier=float(penalty_multiplier),
+            hazard_geometry=hz_geom,
+            affected_road_ids=tuple(str(r) for r in affected_road_ids),
+            slowed_road_ids=tuple(str(r) for r in slowed_road_ids),
+        )
+
+        G = build_graph(roads, mode="car")
+        res = compare_disaster_routes(
+            G=G,
+            origin_point=self._point(origin_lon, origin_lat),
+            destination_point=self._point(destination_lon, destination_lat),
+            scenario=spec,
+            cost_metric=cost_metric,
+        )
+
+        for key in ("baseline_route", "hazard_aware_route"):
+            leg = res.get(key) or {}
+            if leg.get("path"):
+                leg["path"] = self._to_lonlat_path(leg["path"])
+
+        aff = res.get("affected_network") or {}
+        closed_segs = aff.pop("closed_segments_projected", [])
+        pen_segs = aff.pop("penalized_segments_projected", [])
+        aff["closed_segments"] = [self._to_lonlat_path(seg) for seg in closed_segs]
+        aff["penalized_segments"] = [self._to_lonlat_path(seg) for seg in pen_segs]
+
+        res["provenance"] = {
+            "data_mode": "live_postgis",
+            "execution_engine": "backend_networkx_dijkstra",
+            "algorithm": DISASTER_ROUTE_ALGORITHM,
+            "dataset_version": self.cfg.dataset_version,
+            "analysis_srid": self.cfg.analysis_srid,
+            "cost_metric": cost_metric,
+            "scenario_id": None if scenario_id is None else str(scenario_id),
+        }
+        return res
 
     # ------------------------------------------------------------------
     @staticmethod

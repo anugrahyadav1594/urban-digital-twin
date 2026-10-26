@@ -1,136 +1,320 @@
 "use client";
-import { useEffect, useState } from "react";
-import { PRESETS, useWindowStore, type WindowId } from "@/stores/window-store";
-import { useMapStore } from "@/stores/map-store";
-import { useScenarioStore } from "@/stores/scenario-store";
-import { mapBridge } from "@/cesium/map-bridge";
 
-type Group = { label: string; items: { id: WindowId; label: string; kbd?: string }[] };
+import React, { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { STUDY_AREAS } from "@/lib/routing-engine";
+import { useRouteAnalysisStore } from "@/stores/route-analysis-store";
+import { useWindowStore, type WindowId } from "@/stores/window-store";
 
-const GROUPS: Group[] = [
-  { label: "City", items: [{ id: "city", label: "City information" }, { id: "layers", label: "Dataset layers", kbd: "⌘ 1" }] },
-  { label: "Scenario", items: [{ id: "scenario", label: "Scenario manager", kbd: "⌘ 4" }, { id: "changes", label: "Scenario changes" }] },
-  { label: "Layers", items: [{ id: "layers", label: "Layer manager", kbd: "⌘ 1" }, { id: "legend", label: "Legend" }] },
-  { label: "Planning", items: [{ id: "planning", label: "Site suitability / tools", kbd: "⌘ 2" }, { id: "inspector", label: "Object inspector" }] },
-  { label: "Analysis", items: [{ id: "analysis", label: "Analysis", kbd: "⌘ 3" }, { id: "results", label: "Results" }] },
-  { label: "Simulation", items: [{ id: "simulation", label: "Simulation controls" }, { id: "jobs", label: "Job monitor" }] },
-  { label: "Improve", items: [{ id: "scorecard", label: "City scorecard" }, { id: "development", label: "Development planner" }] },
-  { label: "Emergency", items: [{ id: "emergency", label: "Route finder / disaster simulator" }] },
-  { label: "Compare", items: [{ id: "comparison", label: "Scenario comparison", kbd: "⌘ 6" }, { id: "regions", label: "Comparison regions" }] },
-  { label: "AI", items: [{ id: "ai", label: "Planning assistant", kbd: "⌘ 5" }, { id: "trace", label: "Agent trace" }] }
+interface Props {
+  onOpenPalette: () => void;
+}
+
+const ADVANCED_TOOLS: { id: WindowId; label: string; group: string }[] = [
+  { id: "layers", label: "Layer Manager & Opacity", group: "Map & Inspection" },
+  { id: "inspector", label: "Feature Inspector", group: "Map & Inspection" },
+  { id: "regions", label: "Regional Comparison Overlays", group: "Map & Inspection" },
+  { id: "emergency", label: "Station-to-Incident Dispatch", group: "Urban Planning Modules" },
+  { id: "simulation", label: "Parametric Exposure Simulator", group: "Urban Planning Modules" },
+  { id: "analysis", label: "Site Suitability Analysis", group: "Urban Planning Modules" },
+  { id: "planning", label: "Road & Zoning Proposals", group: "Urban Planning Modules" },
+  { id: "comparison", label: "Scenario Comparison Matrix", group: "Urban Planning Modules" },
+  { id: "scorecard", label: "Sector Readiness Scorecard", group: "Diagnostics & AI" },
+  { id: "ai", label: "Spatial AI Assistant", group: "Diagnostics & AI" },
+  { id: "jobs", label: "Background Job Monitor", group: "Diagnostics & AI" },
 ];
 
-const SearchIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-);
+export default function TopNavbar({ onOpenPalette }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
 
-const HomeIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-);
+  const {
+    workspaceView,
+    setWorkspaceView,
+    studyAreaId,
+    draftScenario,
+    dataMode,
+    setDataMode,
+    backendStatus,
+    refreshBackendStatus,
+    resetDemo,
+    setLeftPanelOpen,
+    setRightPanelOpen,
+    result,
+  } = useRouteAnalysisStore();
 
-const MaximizeIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
-);
+  const openWindow = useWindowStore((s) => s.openWindow);
+  const openFloatingCount = useWindowStore(
+    (s) => Object.values(s.windows).filter((w) => w.visible).length
+  );
+  const closeAllWindows = useWindowStore((s) => s.closeAll);
 
-const SettingsIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-);
-
-const ChevronDownIcon = () => (
-  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="chevron-icon" suppressHydrationWarning><path d="m6 9 6 6 6-6"/></svg>
-);
-
-const GROUP_ICONS: Record<string, React.ReactNode> = {
-  City: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg>,
-  Scenario: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>,
-  Layers: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
-  Planning: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>,
-  Analysis: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
-  Simulation: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><polygon points="5 3 19 12 5 21 5 3"/></svg>,
-  Improve: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M3 17l6-6 4 4 8-8"/><path d="M21 7v6h-6"/></svg>,
-  Emergency: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="M12 5v14"/><path d="M5 12h14"/></svg>,
-  Compare: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></svg>,
-  AI: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/></svg>
-};
-
-const WorkspaceIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" suppressHydrationWarning><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
-);
-
-export default function TopNavbar() {
-  const [open, setOpen] = useState<string | null>(null);
-      const { openWindow, applyPreset, closeAll, autoArrangeWindows } = useWindowStore();
-  const { demo, ready } = useMapStore();
-  const { scenarios, activeId, setActive } = useScenarioStore();
+  const [openMenu, setOpenMenu] = useState<"status" | "tools" | null>(null);
+  const navRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const close = () => setOpen(null);
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
+    const onDocClick = (e: MouseEvent) => {
+      if (!navRef.current?.contains(e.target as Node)) {
+        setOpenMenu(null);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenMenu(null);
+    };
+    window.addEventListener("mousedown", onDocClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("keydown", onKey);
+    };
   }, []);
 
-  const openPalette = () => window.dispatchEvent(new CustomEvent("nagarx:palette"));
+  const area = STUDY_AREAS[studyAreaId];
+
+  const switchView = (view: "overview" | "map") => {
+    setWorkspaceView(view);
+    if (view === "map" && pathname !== "/workspace") {
+      router.push("/workspace");
+    }
+  };
 
   return (
-    <div className="navbar" onClick={(e) => e.stopPropagation()} suppressHydrationWarning>
-      <div className="brand"><span className="dot" />NAGAR-X</div>
-      <div className="nav-sep" />
+    <header ref={navRef} className="nx-topbar" role="banner">
+      {/* Brand + View Switcher */}
+      <div className="nx-topbar-left">
+        <button
+          type="button"
+          className="nx-brand-btn"
+          onClick={() => switchView("overview")}
+          title="NagarX Mission Overview"
+        >
+          <span className="nx-brand-mark" aria-hidden="true" />
+          <span className="nx-brand-text">
+            <strong>NAGARX</strong>
+            <small>DISASTER-AWARE ROUTING</small>
+          </span>
+        </button>
 
-      {GROUPS.map((g) => (
-        <div key={g.label} style={{ position: "relative" }}>
-          <button className={"navitem" + (open === g.label ? " active" : "")} onClick={() => setOpen(open === g.label ? null : g.label)}>
-            {GROUP_ICONS[g.label]}
-            <span>{g.label}</span>
-            <ChevronDownIcon />
+        <nav className="nx-view-tabs" aria-label="Primary Workspace Views">
+          <button
+            type="button"
+            className={
+              "nx-view-tab" + (workspaceView === "overview" ? " active" : "")
+            }
+            onClick={() => switchView("overview")}
+          >
+            Overview
           </button>
-          {open === g.label && (
-            <div className="menu">
-              {g.items.map((it) => (
-                <button key={it.id + it.label} onClick={() => { openWindow(it.id); setOpen(null); }}>
-                  <span>{it.label}</span>
-                  {it.kbd && <span className="kbd">{it.kbd}</span>}
+          <button
+            type="button"
+            className={
+              "nx-view-tab" + (workspaceView === "map" ? " active" : "")
+            }
+            onClick={() => switchView("map")}
+          >
+            3D City Workspace
+          </button>
+        </nav>
+      </div>
+
+      {/* Active Study Area, Scenario & Prominent Data Mode Indicator */}
+      <div className="nx-topbar-center">
+        <button
+          type="button"
+          className="nx-context-pill"
+          onClick={() => {
+            switchView("map");
+            setLeftPanelOpen(true);
+            useRouteAnalysisStore.getState().setWizardStep(1);
+          }}
+          title="Change Study Area (Step 1)"
+        >
+          <span className="nx-context-label">Area:</span>
+          <strong>{area.shortName}</strong>
+        </button>
+
+        <button
+          type="button"
+          className="nx-context-pill hide-sm"
+          onClick={() => {
+            switchView("map");
+            setLeftPanelOpen(true);
+            useRouteAnalysisStore.getState().setWizardStep(3);
+          }}
+          title="Configure Disaster Scenario (Step 3)"
+        >
+          <span className="nx-context-label">Scenario:</span>
+          <strong>
+            {draftScenario.active ? draftScenario.name.slice(0, 26) : "Inactive"}
+          </strong>
+        </button>
+
+        {/* Data Mode Indicator & Popover */}
+        <div className="nx-menu-anchor">
+          <button
+            type="button"
+            className={
+              "nx-mode-badge " + (dataMode === "live" ? "live" : "demo")
+            }
+            onClick={() =>
+              setOpenMenu(openMenu === "status" ? null : "status")
+            }
+            aria-expanded={openMenu === "status"}
+            title="Inspect data provenance and backend connection status"
+          >
+            <span className="nx-mode-dot" aria-hidden="true" />
+            <span>
+              {dataMode === "live" ? "LIVE · POSTGIS" : "DEMO MODE · SIMULATED"}
+            </span>
+          </button>
+
+          {openMenu === "status" && (
+            <div
+              className="nx-dropdown nx-status-popover"
+              role="dialog"
+              aria-label="Data Mode and Connection Status"
+            >
+              <div className="nx-pop-title">Data Mode &amp; Provenance</div>
+              <p className="nx-pop-desc">{backendStatus.detail}</p>
+              <div className="nx-pop-meta mono">
+                Active Source: {area.provenance}
+              </div>
+
+              <div className="nx-segmented" style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className={
+                    "nx-seg-btn" + (dataMode === "demo" ? " active" : "")
+                  }
+                  onClick={() => setDataMode("demo")}
+                >
+                  Demo / Local Graph
                 </button>
-              ))}
+                <button
+                  type="button"
+                  className={
+                    "nx-seg-btn" + (dataMode === "live" ? " active" : "")
+                  }
+                  disabled={area.isSyntheticBenchmark}
+                  onClick={() => setDataMode("live")}
+                >
+                  Live PostGIS
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  marginTop: 10,
+                }}
+              >
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-ghost nx-btn-xs"
+                  onClick={() => void refreshBackendStatus()}
+                >
+                  {backendStatus.checking ? "Probing..." : "Re-check Backend"}
+                </button>
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-secondary nx-btn-xs"
+                  onClick={() => setOpenMenu(null)}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           )}
         </div>
-      ))}
+      </div>
 
-      <div className="nav-sep" />
-
-      <div style={{ position: "relative" }}>
-        <button className={"navitem" + (open === "ws" ? " active" : "")} onClick={() => setOpen(open === "ws" ? null : "ws")}>
-          <WorkspaceIcon />
-          <span>Workspace</span>
-          <ChevronDownIcon />
-        </button>
-        {open === "ws" && (
-          <div className="menu">
-            <div className="sec">Presets</div>
-            {Object.keys(PRESETS).map((p) => (
-              <button key={p} onClick={() => { applyPreset(p); setOpen(null); }}>{p}</button>
-            ))}
-            <div className="sec">Layout</div>
-            <button onClick={() => { autoArrangeWindows(); setOpen(null); }}>Auto-align open windows</button>
-            <button onClick={() => { closeAll(); setOpen(null); }}>Close all windows</button>
-            <button onClick={() => { localStorage.removeItem("nagarx.workspace.layout.v1"); location.reload(); }}>Reset saved layout</button>
-          </div>
+      {/* Right Actions */}
+      <div className="nx-topbar-right">
+        {workspaceView === "map" && result && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-xs hide-md"
+            onClick={() => setRightPanelOpen(true)}
+          >
+            Results
+          </button>
         )}
-      </div>
 
-      <div className="nav-right">
-        <select className="input" style={{ width: 190, padding: "5px 10px", fontSize: 13, borderRadius: 7, height: 34 }} value={activeId} onChange={(e) => setActive(e.target.value)} title="Active scenario">
-          {scenarios.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        {demo && <span className="badge-demo">DEMO DATA</span>}
-        <button className="search" onClick={openPalette}>
-          <SearchIcon /><span>Search</span><span className="kbd">{"⌘K"}</span>
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-xs"
+          onClick={onOpenPalette}
+          title="Open Command & Search Palette (Ctrl+K)"
+          aria-label="Open Command Palette"
+        >
+          Search <kbd className="nx-kbd">⌘K</kbd>
         </button>
-        <button className="icon-btn" title="Fly to city" onClick={() => mapBridge.home()}><HomeIcon /></button>
-        <button className="icon-btn" title="Fullscreen" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())}><MaximizeIcon /></button>
-        <button className="icon-btn" title="Settings" onClick={() => openWindow("city")}><SettingsIcon /></button>
-        <span className="chip" title={ready ? "Viewer ready" : "Viewer loading"} style={{ borderColor: ready ? "rgba(52,211,153,.35)" : undefined, color: ready ? "var(--good)" : undefined }}>&#9679;</span>
+
+        {/* Advanced Floating Modules */}
+        <div className="nx-menu-anchor">
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-xs"
+            onClick={() => setOpenMenu(openMenu === "tools" ? null : "tools")}
+            aria-expanded={openMenu === "tools"}
+          >
+            Tools{openFloatingCount > 0 ? ` (${openFloatingCount})` : ""} ▾
+          </button>
+
+          {openMenu === "tools" && (
+            <div
+              className="nx-dropdown nx-tools-dropdown"
+              role="menu"
+              aria-label="Advanced Urban Twin Modules"
+            >
+              <div className="nx-pop-title">Advanced Digital Twin Modules</div>
+              <p className="nx-pop-desc" style={{ marginBottom: 8 }}>
+                Optional floating windows for broader urban planning workflows.
+              </p>
+              {ADVANCED_TOOLS.map((tool) => (
+                <button
+                  key={tool.id}
+                  type="button"
+                  role="menuitem"
+                  className="nx-tool-item"
+                  onClick={() => {
+                    switchView("map");
+                    openWindow(tool.id);
+                    setOpenMenu(null);
+                  }}
+                >
+                  <span>{tool.label}</span>
+                  <small>{tool.group}</small>
+                </button>
+              ))}
+              {openFloatingCount > 0 && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="nx-tool-item danger"
+                  onClick={() => {
+                    closeAllWindows();
+                    setOpenMenu(null);
+                  }}
+                >
+                  <span>Close All Floating Windows</span>
+                  <small>{openFloatingCount} open</small>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="nx-btn nx-btn-secondary nx-btn-xs"
+          onClick={() => void resetDemo()}
+          title="Reset workspace to clean Demonstration Flood Scenario"
+        >
+          Reset Demo
+        </button>
       </div>
-    </div>
+    </header>
   );
 }

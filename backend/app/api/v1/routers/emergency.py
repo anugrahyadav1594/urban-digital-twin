@@ -45,6 +45,33 @@ class DisasterRequest(BaseModel):
     scenario_id: str | int | None = None
 
 
+class RoutePointInput(BaseModel):
+    lon: float = Field(..., ge=-180, le=180)
+    lat: float = Field(..., ge=-90, le=90)
+    label: str | None = None
+
+
+class RouteScenarioInput(BaseModel):
+    name: str = Field("Simulated Hazard Scenario", min_length=1, max_length=160)
+    type: str = Field("flood")
+    active: bool = True
+    severity_mode: str = Field("closed")
+    penalty_multiplier: float = Field(3.0, ge=1.0, le=100.0)
+    polygon: list[list[float]] | None = None
+    center: list[float] | None = None
+    radius_m: float | None = Field(None, gt=0, le=50000)
+    affected_road_ids: list[str] = Field(default_factory=list)
+    slowed_road_ids: list[str] = Field(default_factory=list)
+
+
+class RouteCompareRequest(BaseModel):
+    origin: RoutePointInput
+    destination: RoutePointInput
+    scenario: RouteScenarioInput = Field(default_factory=RouteScenarioInput)
+    cost_metric: str = Field("time")
+    scenario_id: int | str | None = None
+
+
 @router.get("/catalogue")
 def catalogue(svc: Emergency) -> dict[str, Any]:
     """Hazard types and mitigation measures the engine supports."""
@@ -83,3 +110,33 @@ def simulate(req: DisasterRequest, svc: Emergency) -> dict[str, Any]:
     if "error" in out:
         raise HTTPException(422, out["error"])
     return out
+
+
+@router.post("/route-compare")
+def route_compare(req: RouteCompareRequest, svc: Emergency) -> dict[str, Any]:
+    """Compare baseline and hazard-aware routes between origin and destination."""
+    try:
+        out = svc.compare_od_routes(
+            origin_lon=req.origin.lon,
+            origin_lat=req.origin.lat,
+            destination_lon=req.destination.lon,
+            destination_lat=req.destination.lat,
+            scenario_name=req.scenario.name,
+            scenario_type=req.scenario.type,
+            active=req.scenario.active,
+            severity_mode=req.scenario.severity_mode,
+            penalty_multiplier=req.scenario.penalty_multiplier,
+            polygon_lonlat=req.scenario.polygon,
+            center_lonlat=req.scenario.center,
+            radius_m=req.scenario.radius_m,
+            affected_road_ids=req.scenario.affected_road_ids,
+            slowed_road_ids=req.scenario.slowed_road_ids,
+            cost_metric=req.cost_metric,
+            scenario_id=_coerce_scenario(req.scenario_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if "error" in out:
+        raise HTTPException(409, out["error"])
+    return out
+

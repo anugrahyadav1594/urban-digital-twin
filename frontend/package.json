@@ -6,7 +6,8 @@
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
-    "lint": "next lint",
+    "lint": "eslint .",
+    "test": "node --import ./tests/ts-loader.mjs --experimental-strip-types --test tests/*.test.ts",
     "postinstall": "node scripts/copy-cesium.mjs"
   },
   "dependencies": {

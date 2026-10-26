@@ -26,4 +26,8 @@ ScenarioRepo = Annotated[ScenarioRepository, Depends(lambda s=Depends(db_session
 Planning = Annotated[PlanningService, Depends(lambda s=Depends(db_session): PlanningService(s))]
 Analysis = Annotated[AnalysisService, Depends(lambda s=Depends(db_session): AnalysisService(s))]
 Scenarios = Annotated[ScenarioService, Depends(lambda s=Depends(db_session): ScenarioService(s))]
-Emergency = Annotated[EmergencyService, Depends(lambda s=Depends(db_session): EmergencyService(s))]
+def get_emergency_service(s: Session = Depends(db_session)) -> EmergencyService:
+    return EmergencyService(s)
+
+
+Emergency = Annotated[EmergencyService, Depends(get_emergency_service)]

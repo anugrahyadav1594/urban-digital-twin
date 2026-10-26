@@ -3,8 +3,9 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NAGAR-X · Urban Digital Twin Workspace",
-  description: "Floating-window geospatial planning workspace over a Cesium 3D city"
+  title: "NagarX — 3D Urban Digital Twin & Disaster-Aware Routing",
+  description:
+    "Interactive 3D urban digital-twin and disaster-aware topological route-planning research prototype",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#070b12" };
