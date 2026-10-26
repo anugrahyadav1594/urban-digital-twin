@@ -4,6 +4,7 @@
 # Read POSTGIS_PORT from .env if present, else default to 5432.
 PORT := $(shell [ -f .env ] && grep -E '^POSTGIS_PORT=' .env | tail -1 | cut -d= -f2 || true)
 PORT := $(if $(PORT),$(PORT),5432)
+PY := $(shell [ -x .venv/bin/python ] && echo $(CURDIR)/.venv/bin/python || echo python3)
 
 help:
 	@echo "  make verify    db-up -> check -> seed -> test  (start here)"
@@ -77,17 +78,17 @@ db-logs:
 	docker compose logs -f db
 
 doctor:
-	cd backend && python -m app.storage.doctor
+	cd backend && $(PY) -m app.storage.doctor
 
 check:
-	cd backend && python -m app.storage.bootstrap check
+	cd backend && $(PY) -m app.storage.bootstrap check
 
 seed:
-	python db/seed_demo.py
-	cd backend && python -m app.storage.bootstrap counts
+	$(PY) db/seed_demo.py
+	cd backend && $(PY) -m app.storage.bootstrap counts
 
 test:
-	cd backend && python -m pytest tests/ -v
+	cd backend && $(PY) -m pytest tests/ -v
 
 verify: db-up check seed test
 	@echo ""

@@ -139,6 +139,7 @@ def to_road(row: Any, srid: int | None = None) -> Road:
         speed=_f(row.speed_limit) or 40.0,
         capacity=_f(row.capacity),
         oneway=bool(row.oneway),
+        source=getattr(row, "source", None),
     )
 
 

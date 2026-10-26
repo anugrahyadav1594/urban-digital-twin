@@ -189,6 +189,7 @@ def build_graph(
                 "road_id": str(r.id),
                 "road_class": r.road_class,
                 "capacity": r.capacity,
+                "source": getattr(r, "source", None),
             }
             G.add_edge(u, v, **attrs)
             if not r.oneway:

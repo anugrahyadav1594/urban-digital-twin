@@ -111,28 +111,32 @@ def classify_affected_edges(
     for u, v, data in G.edges(data=True):
         raw_id = str(data.get("road_id", ""))
         parent_id = raw_id.split("#", 1)[0]
+        src_str = str(data.get("source") or "")
+        osm_tag = src_str.split(":", 1)[1] if "osm_way_" in src_str and ":" in src_str else ""
 
-        in_explicit_affected = (parent_id in explicit_affected) or (raw_id in explicit_affected)
-        in_explicit_slowed = (parent_id in explicit_slowed) or (raw_id in explicit_slowed)
+        candidate_ids = {cid for cid in (parent_id, raw_id, osm_tag) if cid}
+        in_explicit_affected = bool(candidate_ids & explicit_affected)
+        in_explicit_slowed = bool(candidate_ids & explicit_slowed)
         in_geom = False
         if hz is not None:
             seg = LineString([u, v])
             in_geom = bool(hz.intersects(seg))
 
+        report_id = osm_tag or parent_id
         is_primary_hit = in_explicit_affected or in_geom
         if is_primary_hit:
             if scenario.severity_mode == "closed":
                 closed_edges.add((u, v))
-                if parent_id:
-                    closed_road_ids.add(parent_id)
+                if report_id:
+                    closed_road_ids.add(report_id)
             else:
                 penalized_edges.add((u, v))
-                if parent_id:
-                    penalized_road_ids.add(parent_id)
+                if report_id:
+                    penalized_road_ids.add(report_id)
         elif in_explicit_slowed:
             penalized_edges.add((u, v))
-            if parent_id:
-                penalized_road_ids.add(parent_id)
+            if report_id:
+                penalized_road_ids.add(report_id)
 
     return closed_edges, penalized_edges, closed_road_ids, penalized_road_ids
 

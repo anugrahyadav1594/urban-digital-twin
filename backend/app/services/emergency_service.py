@@ -375,7 +375,10 @@ class EmergencyService:
             slowed_road_ids=tuple(str(r) for r in slowed_road_ids),
         )
 
-        G = build_graph(roads, mode="car")
+        # OpenStreetMap networks (>600 ways) already share intersection vertices
+        # across ways, and skipping geometric line-crossing splits preserves
+        # grade-separated bridges/flyovers while building the graph in ~25 ms.
+        G = build_graph(roads, mode="car", node_network=(len(roads) <= 600))
         res = compare_disaster_routes(
             G=G,
             origin_point=self._point(origin_lon, origin_lat),

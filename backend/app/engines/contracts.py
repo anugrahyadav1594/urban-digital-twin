@@ -226,6 +226,7 @@ class Road:
     speed: float = 30.0                # km/h
     capacity: float | None = None      # veh/hour
     oneway: bool = False
+    source: str | None = None
 
 
 @dataclass
